@@ -1,8 +1,98 @@
-# Welcome to your Lovable project
+# Dome Markets Dashboard
 
-## Project info
+A real-time prediction markets dashboard displaying data from **Polymarket** and **Kalshi** via the [Dome API](https://domeapi.io).
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Features
+
+- **Multi-Platform Support**: View markets from both Polymarket and Kalshi in a unified interface
+- **Real-Time Prices**: Continuous price polling with configurable rate limiting
+- **Full Market Discovery**: Automatically paginates through all open markets
+- **Smart Rate Limiting**: Token bucket algorithm respects Dome API tier limits
+- **Secure Authentication**: API key stored in session storage, never exposed to client requests
+- **Responsive Design**: Works on desktop and mobile devices
+
+## How It Works
+
+### Architecture
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   React App     │────▶│   Dome REST API  │────▶│   Polymarket    │
+│   (Frontend)    │     │   api.domeapi.io │     │   Kalshi        │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+```
+
+### Data Flow
+
+1. **Login**: User enters their Dome API key, which is validated against the API
+2. **Discovery Loop**: Automatically fetches all open markets from both platforms using pagination
+3. **Price Updates**: Continuously polls token prices for Polymarket markets
+4. **Display**: Markets are shown in a sortable, filterable table with real-time updates
+
+### Key Components
+
+- **AuthContext**: Manages API key authentication and tier settings
+- **MarketsContext**: Handles market discovery, storage, and price updates
+- **RateLimiter**: Token bucket implementation for API rate limiting
+
+## Running Locally
+
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Start the dev server: `npm run dev`
+4. Open http://localhost:5173
+5. Enter your Dome API key to connect
+
+## API Tier Limits
+
+| Tier       | Queries/Second | Queries/10 Seconds |
+|------------|----------------|-------------------|
+| Free       | 1              | 10                |
+| Dev        | 100            | 500               |
+| Enterprise | Custom         | Custom            |
+
+The dashboard automatically adjusts request rates based on your selected tier.
+
+## WebSocket vs Polling
+
+Currently, the dashboard uses **polling** for price updates because:
+
+- WebSocket subscriptions on Free tier are limited (2 subscriptions, 5 wallets each)
+- Polling allows tracking all markets regardless of tier
+- The rate limiter ensures we stay within API limits
+
+For higher-volume use cases, WebSocket support can be added for Dev tier users.
+
+## Troubleshooting
+
+### 401 Unauthorized
+- Your API key is invalid or expired
+- Get a new key from [domeapi.io](https://domeapi.io)
+
+### 429 Rate Limited
+- You're making too many requests
+- Lower your tier setting or wait for the rate limiter to recover
+- The app will automatically back off and retry
+
+### Markets Not Loading
+- Check your network connection
+- Verify your API key is valid
+- Check the Settings panel for error messages
+
+### WebSocket Disconnected
+- The app will automatically fall back to polling
+- Price updates will continue via REST API calls
+
+## Tech Stack
+
+- **React 18** with TypeScript
+- **Vite** for fast development
+- **Tailwind CSS** with custom design system
+- **shadcn/ui** components
+- **React Router** for navigation
+- **date-fns** for date formatting
+
+---
 
 ## How can I edit this code?
 
@@ -12,62 +102,17 @@ There are several ways of editing your application.
 
 Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
 
-Changes made via Lovable will be committed automatically to this repo.
-
 **Use your preferred IDE**
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+Clone this repo and push changes. The only requirement is having Node.js & npm installed.
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
 git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
 cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
 npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
 npm run dev
 ```
-
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
 
 ## How can I deploy this project?
 
 Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
