@@ -1,190 +1,129 @@
-// Token bucket rate limiter for Dome API
+// Steady-rate limiter for Dome API - exactly 100 QPS, no bursting
 
 import { DomeTier, TIER_LIMITS } from '@/types/dome';
 
 export class RateLimiter {
-  private tokens: number;
-  private lastRefill: number;
   private tier: DomeTier;
   private requestsInLastMinute: number[] = [];
   private lastRequestTime: number = 0;
+  private requestQueue: Array<() => void> = [];
+  private isProcessingQueue: boolean = false;
 
   constructor(tier: DomeTier = 'free') {
     this.tier = tier;
-    this.tokens = TIER_LIMITS[tier].qp10s;
-    this.lastRefill = Date.now();
+    this.lastRequestTime = 0;
   }
 
   setTier(tier: DomeTier) {
     this.tier = tier;
-    this.tokens = Math.min(this.tokens, TIER_LIMITS[tier].qp10s);
   }
 
   getTier(): DomeTier {
     return this.tier;
   }
 
-  private refill() {
-    const now = Date.now();
-    const elapsed = (now - this.lastRefill) / 1000; // seconds
+  private getIntervalMs(): number {
+    // Exact interval between requests: 1000ms / QPS
+    // For dev tier (100 QPS): 10ms between requests
     const limit = TIER_LIMITS[this.tier];
-    
-    // Refill tokens based on QPS rate
-    const tokensToAdd = elapsed * limit.qps;
-    this.tokens = Math.min(this.tokens + tokensToAdd, limit.qp10s);
-    this.lastRefill = now;
-    
-    // Clean up old request timestamps
+    return Math.ceil(1000 / limit.qps);
+  }
+
+  private cleanupOldRequests() {
+    const now = Date.now();
     const oneMinuteAgo = now - 60000;
     this.requestsInLastMinute = this.requestsInLastMinute.filter(t => t > oneMinuteAgo);
   }
 
-  // For parallel batch requests - no per-request delays needed
-  async acquire(): Promise<boolean> {
-    this.refill();
+  // Wait for next available slot - enforces exactly QPS rate with no bursting
+  async waitAndAcquire(): Promise<void> {
+    const intervalMs = this.getIntervalMs();
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
     
-    if (this.tokens >= 1) {
-      this.tokens -= 1;
+    // If we need to wait, wait exactly the right amount
+    if (timeSinceLastRequest < intervalMs) {
+      const waitTime = intervalMs - timeSinceLastRequest;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+    
+    this.lastRequestTime = Date.now();
+    this.requestsInLastMinute.push(this.lastRequestTime);
+    this.cleanupOldRequests();
+  }
+
+  // Stream-based acquisition for steady 100 QPS
+  // Fires callback at exactly QPS rate - no bursting
+  async acquireStream(count: number, onTokenAvailable: (index: number) => void): Promise<void> {
+    const intervalMs = this.getIntervalMs();
+    
+    for (let i = 0; i < count; i++) {
       const now = Date.now();
+      const timeSinceLastRequest = now - this.lastRequestTime;
+      
+      // Wait for exact interval if needed
+      if (timeSinceLastRequest < intervalMs && this.lastRequestTime > 0) {
+        const waitTime = intervalMs - timeSinceLastRequest;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+      
+      this.lastRequestTime = Date.now();
+      this.requestsInLastMinute.push(this.lastRequestTime);
+      
+      // Fire callback immediately after acquiring slot
+      onTokenAvailable(i);
+    }
+    
+    this.cleanupOldRequests();
+  }
+
+  // Acquire multiple slots at steady rate (no bursting)
+  // Waits for all slots to be acquired at QPS rate
+  async acquireMultiple(count: number): Promise<void> {
+    const intervalMs = this.getIntervalMs();
+    
+    for (let i = 0; i < count; i++) {
+      const now = Date.now();
+      const timeSinceLastRequest = now - this.lastRequestTime;
+      
+      if (timeSinceLastRequest < intervalMs && this.lastRequestTime > 0) {
+        const waitTime = intervalMs - timeSinceLastRequest;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+      
+      this.lastRequestTime = Date.now();
+      this.requestsInLastMinute.push(this.lastRequestTime);
+    }
+    
+    this.cleanupOldRequests();
+  }
+
+  // Simple acquire - returns true if slot available now
+  async acquire(): Promise<boolean> {
+    const intervalMs = this.getIntervalMs();
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    
+    if (timeSinceLastRequest >= intervalMs || this.lastRequestTime === 0) {
       this.lastRequestTime = now;
       this.requestsInLastMinute.push(now);
+      this.cleanupOldRequests();
       return true;
     }
     
     return false;
   }
 
-  async waitAndAcquire(): Promise<void> {
-    const limit = TIER_LIMITS[this.tier];
-    
-    while (true) {
-      this.refill();
-      
-      // Check if we have tokens available - no artificial delays
-      if (this.tokens >= 1) {
-        this.tokens -= 1;
-        this.lastRequestTime = Date.now();
-        this.requestsInLastMinute.push(this.lastRequestTime);
-        return;
-      }
-      
-      // Wait exactly 1/qps seconds for next token - no buffer
-      const waitForToken = Math.ceil(1000 / limit.qps);
-      await new Promise(resolve => setTimeout(resolve, waitForToken));
-    }
-  }
-
-  // Acquire multiple tokens at once for parallel requests
-  // Uses burst capacity first, then waits for refill as needed
-  async acquireMultiple(count: number): Promise<void> {
-    const limit = TIER_LIMITS[this.tier];
-    this.refill();
-    
-    // Use available tokens immediately (burst capacity)
-    if (this.tokens >= count) {
-      this.tokens -= count;
-      const now = Date.now();
-      this.lastRequestTime = now;
-      for (let i = 0; i < count; i++) {
-        this.requestsInLastMinute.push(now);
-      }
-      return;
-    }
-    
-    // Use what we have, then wait for the rest
-    const availableNow = Math.floor(this.tokens);
-    const tokensNeeded = count - availableNow;
-    
-    if (availableNow > 0) {
-      this.tokens -= availableNow;
-    }
-    
-    // Wait for remaining tokens to refill at QPS rate
-    if (tokensNeeded > 0) {
-      const waitTime = Math.ceil((tokensNeeded / limit.qps) * 1000);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-      this.refill();
-      this.tokens -= tokensNeeded;
-    }
-    
-    const now = Date.now();
-    this.lastRequestTime = now;
-    for (let i = 0; i < count; i++) {
-      this.requestsInLastMinute.push(now);
-    }
-  }
-
-  // Stream-based token acquisition for maximum throughput
-  // Fires callback as soon as each token is available
-  async acquireStream(count: number, onTokenAvailable: (index: number) => void): Promise<void> {
-    const limit = TIER_LIMITS[this.tier];
-    
-    for (let i = 0; i < count; i++) {
-      this.refill();
-      
-      // If token available, fire immediately
-      if (this.tokens >= 1) {
-        this.tokens -= 1;
-        const now = Date.now();
-        this.lastRequestTime = now;
-        this.requestsInLastMinute.push(now);
-        onTokenAvailable(i);
-        continue;
-      }
-      
-      // Wait for next token to refill (1/qps seconds)
-      const waitTime = Math.ceil(1000 / limit.qps);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-      this.refill();
-      this.tokens -= 1;
-      const now = Date.now();
-      this.lastRequestTime = now;
-      this.requestsInLastMinute.push(now);
-      onTokenAvailable(i);
-    }
-  }
-
-  // Optimized batch acquire that starts requests immediately with available tokens
-  // Returns number of tokens available now, and schedules callback for the rest
-  acquireImmediate(count: number): { immediate: number; waitMs: number } {
-    const limit = TIER_LIMITS[this.tier];
-    this.refill();
-    
-    const immediate = Math.min(Math.floor(this.tokens), count);
-    const remaining = count - immediate;
-    
-    if (immediate > 0) {
-      this.tokens -= immediate;
-      const now = Date.now();
-      this.lastRequestTime = now;
-      for (let i = 0; i < immediate; i++) {
-        this.requestsInLastMinute.push(now);
-      }
-    }
-    
-    const waitMs = remaining > 0 ? Math.ceil((remaining / limit.qps) * 1000) : 0;
-    return { immediate, waitMs };
-  }
-
-  // Consume tokens after waiting (called after waitMs from acquireImmediate)
-  consumeAfterWait(count: number): void {
-    this.refill();
-    this.tokens -= count;
-    const now = Date.now();
-    this.lastRequestTime = now;
-    for (let i = 0; i < count; i++) {
-      this.requestsInLastMinute.push(now);
-    }
-  }
-
   getRequestsPerMinute(): number {
-    this.refill(); // This also cleans up old timestamps
+    this.cleanupOldRequests();
     return this.requestsInLastMinute.length;
   }
 
   getAvailableTokens(): number {
-    this.refill();
-    return Math.floor(this.tokens);
+    // With no bursting, either 1 or 0 available
+    const intervalMs = this.getIntervalMs();
+    const timeSinceLastRequest = Date.now() - this.lastRequestTime;
+    return timeSinceLastRequest >= intervalMs ? 1 : 0;
   }
 }
 
