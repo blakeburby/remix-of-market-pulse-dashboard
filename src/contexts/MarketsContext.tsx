@@ -442,8 +442,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     if (targets.length === 0) return;
 
     const pending = new Map<string, number>();
-    // Larger batch size for true parallel fetching - use more of the rate limit capacity
-    const BATCH_SIZE = tier === 'free' ? 5 : 50;
+    // Larger batch size for true parallel fetching - fully utilize 100 QPS rate limit
+    const BATCH_SIZE = tier === 'free' ? 5 : 100;
 
     const flush = () => {
       if (pending.size === 0) return;
