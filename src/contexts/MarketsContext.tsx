@@ -198,6 +198,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return acc + (m.sideA.tokenId ? 1 : 0) + (m.sideB.tokenId ? 1 : 0);
     }, 0);
 
+    // Count markets with updated prices (not default 50/50)
+    const updatedPriceCount = markets.filter(m => 
+      Math.abs(m.sideA.probability - 0.5) > 0.001 || m.platform === 'KALSHI'
+    ).length;
+
     const lastDiscovery = [
       syncState.POLYMARKET.lastSuccessAt,
       syncState.KALSHI.lastSuccessAt,
@@ -220,6 +225,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       lastPriceUpdateTime: lastPriceUpdate,
       connectionMode,
       requestsPerMinute: globalRateLimiter.getRequestsPerMinute(),
+      marketsWithPrices: updatedPriceCount,
     };
   }, [markets, syncState, lastPriceUpdate, isPriceUpdating, wsConnected]);
 
