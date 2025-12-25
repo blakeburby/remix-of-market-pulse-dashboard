@@ -63,23 +63,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       );
 
       if (response.status === 401) {
-        throw new Error('Invalid API key');
+        throw new Error('Invalid API key. Please check your key and try again.');
       }
 
       if (response.status === 429) {
-        throw new Error('Rate limited. Please wait and try again.');
+        throw new Error('Rate limited. Please wait a moment and try again.');
+      }
+
+      if (response.status === 403) {
+        throw new Error('Access forbidden. Your API key may not have the required permissions.');
       }
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        throw new Error(`API error (${response.status}). Please try again.`);
       }
 
       return true;
     } catch (error) {
+      if (error instanceof TypeError && error.message === 'Failed to fetch') {
+        // Network error - could be CORS, offline, or API down
+        throw new Error('Unable to connect to Dome API. Please check your internet connection or try again later.');
+      }
       if (error instanceof Error) {
         throw error;
       }
-      throw new Error('Failed to validate API key');
+      throw new Error('Failed to validate API key. Please try again.');
     }
   };
 
