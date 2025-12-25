@@ -50,8 +50,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const validateApiKey = async (apiKey: string, retries = 3): Promise<boolean> => {
+    let lastError: Error | null = null;
+    
     for (let attempt = 0; attempt < retries; attempt++) {
       try {
+        // Add a small delay between retries
+        if (attempt > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        }
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+        
         // Test the API key by making a simple request
         const response = await fetch(
           'https://api.domeapi.io/v1/polymarket/markets?status=open&limit=1',
@@ -60,20 +70,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               'Authorization': `Bearer ${apiKey}`,
               'Content-Type': 'application/json',
             },
+            signal: controller.signal,
           }
         );
+        
+        clearTimeout(timeoutId);
 
         if (response.status === 401) {
           throw new Error('Invalid API key. Please check your key and try again.');
         }
 
         if (response.status === 429) {
-          // Parse retry_after from response
           const data = await response.json().catch(() => ({}));
           const retryAfter = data.retry_after || Math.pow(2, attempt + 1);
           
           if (attempt < retries - 1) {
-            // Wait and retry
             console.log(`[Login] Rate limited, waiting ${retryAfter}s before retry ${attempt + 2}/${retries}`);
             await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
             continue;
@@ -91,16 +102,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         return true;
       } catch (error) {
-        if (error instanceof TypeError && error.message === 'Failed to fetch') {
-          throw new Error('Unable to connect to Dome API. Please check your internet connection or try again later.');
-        }
         if (error instanceof Error) {
-          throw error;
+          if (error.name === 'AbortError') {
+            lastError = new Error('Connection timed out. The Dome API may be slow or unreachable.');
+          } else if (error.message === 'Failed to fetch') {
+            lastError = new Error('Unable to reach Dome API. This may be a temporary network issue - please try again.');
+          } else {
+            throw error; // Re-throw known errors (like invalid API key)
+          }
+        } else {
+          lastError = new Error('Failed to validate API key. Please try again.');
         }
-        throw new Error('Failed to validate API key. Please try again.');
+        
+        // Continue to next retry for network errors
+        console.log(`[Login] Attempt ${attempt + 1}/${retries} failed:`, lastError.message);
       }
     }
-    return false;
+    
+    // All retries exhausted
+    throw lastError || new Error('Failed to connect after multiple attempts. Please try again.');
   };
 
   const login = useCallback(async (apiKey: string): Promise<boolean> => {
