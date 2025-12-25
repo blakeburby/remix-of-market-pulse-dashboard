@@ -25,9 +25,9 @@ export function MarketsTable() {
 
   const getPlatformBadge = (platform: string) => {
     if (platform === 'POLYMARKET') {
-      return <Badge variant="secondary" className="bg-chart-1/20 text-chart-1 border-0">Polymarket</Badge>;
+      return <Badge variant="secondary" className="bg-blue-500/20 text-blue-600 dark:text-blue-400 border-0">Polymarket</Badge>;
     }
-    return <Badge variant="secondary" className="bg-chart-2/20 text-chart-2 border-0">Kalshi</Badge>;
+    return <Badge variant="secondary" className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-0">Kalshi</Badge>;
   };
 
   if (filteredMarkets.length === 0) {
