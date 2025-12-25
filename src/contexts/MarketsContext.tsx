@@ -473,10 +473,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   }, [getApiKey, tier]);
 
   // Fetch price for a Polymarket token
-  const fetchTokenPrice = async (tokenId: string, signal?: AbortSignal): Promise<number | null> => {
-    const apiKey = getApiKey();
-    if (!apiKey) return null;
-
+  const fetchTokenPrice = async (tokenId: string, apiKey: string, signal?: AbortSignal): Promise<number | null> => {
     try {
       const response = await rateLimitedFetch(
         `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
@@ -486,20 +483,35 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       );
 
       const data: PolymarketPriceResponse = await response.json();
+      console.log(`[Price] Fetched price for token ${tokenId.slice(0, 8)}...: ${data.price}`);
       return data.price;
-    } catch {
+    } catch (error) {
+      console.error(`[Price] Failed to fetch price for ${tokenId}:`, error);
       return null;
     }
   };
 
   // Update prices for Polymarket tokens one at a time
+  // Using a ref to access current markets to avoid stale closure
+  const marketsRef = useRef(markets);
+  marketsRef.current = markets;
+
   const runPriceUpdate = useCallback(async () => {
     if (!isPriceUpdatingRef.current) return;
 
-    const polymarketMarkets = markets.filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId);
-    if (polymarketMarkets.length === 0) {
-      // Schedule next check
+    const apiKey = getApiKey();
+    if (!apiKey) {
       priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 5000);
+      return;
+    }
+
+    const currentMarkets = marketsRef.current;
+    const polymarketMarkets = currentMarkets.filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId);
+    
+    if (polymarketMarkets.length === 0) {
+      // No markets yet, check again soon
+      console.log('[Price] No Polymarket markets to update, waiting...');
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 2000);
       return;
     }
 
@@ -510,10 +522,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const market = sortedMarkets[0];
 
     if (market.sideA.tokenId) {
-      const priceA = await fetchTokenPrice(market.sideA.tokenId);
+      const priceA = await fetchTokenPrice(market.sideA.tokenId, apiKey);
       if (priceA !== null && isPriceUpdatingRef.current) {
         setMarkets(prev => prev.map(m => {
           if (m.id === market.id) {
+            const priceB = 1 - priceA;
             return {
               ...m,
               sideA: {
@@ -524,9 +537,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
               },
               sideB: {
                 ...m.sideB,
-                price: 1 - priceA,
-                probability: 1 - priceA,
-                odds: (1 - priceA) > 0 ? 1 / (1 - priceA) : null,
+                price: priceB,
+                probability: priceB,
+                odds: priceB > 0 ? 1 / priceB : null,
               },
               lastUpdated: new Date(),
             };
@@ -537,11 +550,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Schedule next price update
+    // Schedule next price update - faster polling
     if (isPriceUpdatingRef.current) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 100);
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 50);
     }
-  }, [markets, getApiKey]);
+  }, [getApiKey]);
 
   const startDiscovery = useCallback(() => {
     if (isDiscoveringRef.current) return;

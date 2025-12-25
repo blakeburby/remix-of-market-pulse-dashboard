@@ -57,7 +57,7 @@ export function MarketsTable() {
               <div className="col-span-1">Platform</div>
               <div className="col-span-4">Title</div>
               <div className="col-span-2">Expiration</div>
-              <div className="col-span-2 text-center">Yes / No</div>
+              <div className="col-span-2 text-center">Price (¢)</div>
               <div className="col-span-2 text-center">Probability</div>
               <div className="col-span-1 text-right">Updated</div>
             </div>
@@ -89,16 +89,16 @@ export function MarketsTable() {
                   <span className="text-sm text-foreground">{formatDate(market.endTime)}</span>
                 </div>
 
-                {/* Prices */}
+                {/* Prices - show in cents */}
                 <div className="col-span-2 flex items-center justify-center gap-2">
                   <div className="flex items-center gap-1 text-sm">
                     <ChevronUp className="w-4 h-4 text-green-500" />
-                    <span className="font-mono">${market.sideA.price.toFixed(2)}</span>
+                    <span className="font-mono">{(market.sideA.price * 100).toFixed(1)}¢</span>
                   </div>
                   <span className="text-muted-foreground">/</span>
                   <div className="flex items-center gap-1 text-sm">
                     <ChevronDown className="w-4 h-4 text-red-500" />
-                    <span className="font-mono">${market.sideB.price.toFixed(2)}</span>
+                    <span className="font-mono">{(market.sideB.price * 100).toFixed(1)}¢</span>
                   </div>
                 </div>
 
@@ -194,15 +194,15 @@ export function MarketsTable() {
                         <div className="space-y-1 text-sm">
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Price:</span>
-                            <span className="font-mono">${selectedMarket.sideA.price.toFixed(4)}</span>
+                            <span className="font-mono">{(selectedMarket.sideA.price * 100).toFixed(1)}¢</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Probability:</span>
                             <span className="font-mono">{formatProbability(selectedMarket.sideA.probability)}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-muted-foreground">Odds:</span>
-                            <span className="font-mono">{formatOdds(selectedMarket.sideA.odds)}</span>
+                            <span className="text-muted-foreground">Decimal Odds:</span>
+                            <span className="font-mono">{formatOdds(selectedMarket.sideA.odds)}x</span>
                           </div>
                         </div>
                       </CardContent>
@@ -217,15 +217,15 @@ export function MarketsTable() {
                         <div className="space-y-1 text-sm">
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Price:</span>
-                            <span className="font-mono">${selectedMarket.sideB.price.toFixed(4)}</span>
+                            <span className="font-mono">{(selectedMarket.sideB.price * 100).toFixed(1)}¢</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Probability:</span>
                             <span className="font-mono">{formatProbability(selectedMarket.sideB.probability)}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-muted-foreground">Odds:</span>
-                            <span className="font-mono">{formatOdds(selectedMarket.sideB.odds)}</span>
+                            <span className="text-muted-foreground">Decimal Odds:</span>
+                            <span className="font-mono">{formatOdds(selectedMarket.sideB.odds)}x</span>
                           </div>
                         </div>
                       </CardContent>
