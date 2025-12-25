@@ -484,20 +484,23 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Track failed token IDs to avoid retrying them
   const failedTokenIds = useRef<Set<string>>(new Set());
+  const pendingRequests = useRef<Set<string>>(new Set());
 
-  // Fetch price for a Polymarket token
-  const fetchTokenPrice = async (tokenId: string, apiKey: string, signal?: AbortSignal): Promise<number | null> => {
-    // Skip tokens that have already failed with 404
-    if (failedTokenIds.current.has(tokenId)) {
-      return null;
+  // Fetch price for a Polymarket token (without rate limiter - caller handles batching)
+  const fetchTokenPriceDirect = async (
+    tokenId: string, 
+    apiKey: string, 
+    signal?: AbortSignal
+  ): Promise<{ tokenId: string; price: number | null }> => {
+    if (failedTokenIds.current.has(tokenId) || pendingRequests.current.has(tokenId)) {
+      return { tokenId, price: null };
     }
 
+    pendingRequests.current.add(tokenId);
+
     try {
-      // Wait for rate limiter
-      await globalRateLimiter.waitAndAcquire();
-      
       if (signal?.aborted) {
-        return null;
+        return { tokenId, price: null };
       }
 
       const response = await fetch(
@@ -512,115 +515,119 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       );
 
       if (response.status === 404) {
-        // Token not found - mark as failed and don't retry
-        console.log(`[Price] Token ${tokenId.slice(0, 8)}... not found (404), skipping future requests`);
         failedTokenIds.current.add(tokenId);
-        return null;
+        return { tokenId, price: null };
       }
 
       if (response.status === 429) {
-        // Rate limited - wait and return null, will retry next cycle
-        const waitTime = 5000 + Math.random() * 2000;
-        console.log(`[Price] Rate limited, waiting ${Math.round(waitTime)}ms...`);
-        await sleep(waitTime);
-        return null;
+        // Rate limited - return null, will retry
+        return { tokenId, price: null };
       }
 
       if (!response.ok) {
-        console.error(`[Price] API error for ${tokenId.slice(0, 8)}...: ${response.status}`);
-        return null;
+        return { tokenId, price: null };
       }
 
       const data: PolymarketPriceResponse = await response.json();
-      console.log(`[Price] Token ${tokenId.slice(0, 8)}...: ${(data.price * 100).toFixed(1)}%`);
-      return data.price;
+      return { tokenId, price: data.price };
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        return null;
+        return { tokenId, price: null };
       }
-      console.error(`[Price] Failed to fetch price for ${tokenId.slice(0, 8)}...:`, error);
-      return null;
+      return { tokenId, price: null };
+    } finally {
+      pendingRequests.current.delete(tokenId);
     }
   };
 
-  // Update prices for Polymarket tokens one at a time
   // Using a ref to access current markets to avoid stale closure
   const marketsRef = useRef(markets);
   marketsRef.current = markets;
 
+  // Batch price update - fetches multiple prices in parallel
   const runPriceUpdate = useCallback(async () => {
     if (!isPriceUpdatingRef.current) return;
 
     const apiKey = getApiKey();
     if (!apiKey) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 5000);
-      return;
-    }
-
-    const currentMarkets = marketsRef.current;
-    // Filter out markets with tokens that have failed (404)
-    const polymarketMarkets = currentMarkets.filter(m => 
-      m.platform === 'POLYMARKET' && 
-      m.sideA.tokenId && 
-      !failedTokenIds.current.has(m.sideA.tokenId)
-    );
-    
-    if (polymarketMarkets.length === 0) {
-      // No markets yet, check again soon
-      console.log('[Price] No Polymarket markets to update, waiting...');
       priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 2000);
       return;
     }
 
-    // Pick the oldest updated market that hasn't been updated recently
-    const now = Date.now();
-    const staleThreshold = 30000; // 30 seconds
-    const sortedMarkets = [...polymarketMarkets]
-      .filter(m => now - m.lastUpdated.getTime() > staleThreshold || m.lastUpdated.getTime() === 0)
-      .sort((a, b) => a.lastUpdated.getTime() - b.lastUpdated.getTime());
+    const currentMarkets = marketsRef.current;
+    const polymarketMarkets = currentMarkets.filter(m => 
+      m.platform === 'POLYMARKET' && 
+      m.sideA.tokenId && 
+      !failedTokenIds.current.has(m.sideA.tokenId) &&
+      !pendingRequests.current.has(m.sideA.tokenId)
+    );
     
-    const market = sortedMarkets[0] || polymarketMarkets[0];
+    if (polymarketMarkets.length === 0) {
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 1000);
+      return;
+    }
 
-    if (market.sideA.tokenId) {
-      const priceA = await fetchTokenPrice(market.sideA.tokenId, apiKey);
-      if (priceA !== null && isPriceUpdatingRef.current) {
-        setMarkets(prev => prev.map(m => {
-          if (m.id === market.id) {
-            const priceB = 1 - priceA;
-            return {
-              ...m,
-              sideA: {
-                ...m.sideA,
-                price: priceA,
-                probability: priceA,
-                odds: priceA > 0 ? 1 / priceA : null,
-              },
-              sideB: {
-                ...m.sideB,
-                price: priceB,
-                probability: priceB,
-                odds: priceB > 0 ? 1 / priceB : null,
-              },
-              lastUpdated: new Date(),
-            };
-          }
-          return m;
-        }));
-        setLastPriceUpdate(new Date());
-      } else if (priceA === null && failedTokenIds.current.has(market.sideA.tokenId)) {
-        // Mark this market as updated so we don't keep trying it
-        setMarkets(prev => prev.map(m => {
-          if (m.id === market.id) {
-            return { ...m, lastUpdated: new Date() };
-          }
-          return m;
-        }));
+    // Determine batch size and timing based on tier
+    // Free tier: 1 req/sec, Dev: 100 req/sec, Enterprise: 1000 req/sec
+    const batchSize = tier === 'free' ? 1 : tier === 'dev' ? 10 : 50;
+    const pollInterval = tier === 'free' ? 1100 : tier === 'dev' ? 150 : 60;
+
+    // Prioritize markets without prices yet, then oldest updated
+    const now = Date.now();
+    const sortedMarkets = [...polymarketMarkets].sort((a, b) => {
+      const aHasPrice = Math.abs(a.sideA.probability - 0.5) > 0.001;
+      const bHasPrice = Math.abs(b.sideA.probability - 0.5) > 0.001;
+      if (!aHasPrice && bHasPrice) return -1;
+      if (aHasPrice && !bHasPrice) return 1;
+      return a.lastUpdated.getTime() - b.lastUpdated.getTime();
+    });
+    
+    // Get batch of markets to update
+    const batch = sortedMarkets.slice(0, batchSize);
+
+    // Fetch all prices in parallel
+    const results = await Promise.all(
+      batch.map(market => 
+        fetchTokenPriceDirect(market.sideA.tokenId!, apiKey)
+      )
+    );
+
+    // Build a map of token prices
+    const priceMap = new Map<string, number>();
+    for (const { tokenId, price } of results) {
+      if (price !== null) {
+        priceMap.set(tokenId, price);
       }
     }
 
-    // Schedule next price update based on tier
-    // Free tier: slower polling to avoid rate limits
-    const pollInterval = tier === 'free' ? 1200 : 100;
+    // Update all markets with new prices in one setState call
+    if (priceMap.size > 0 && isPriceUpdatingRef.current) {
+      setMarkets(prev => prev.map(m => {
+        if (m.sideA.tokenId && priceMap.has(m.sideA.tokenId)) {
+          const priceA = priceMap.get(m.sideA.tokenId)!;
+          const priceB = 1 - priceA;
+          return {
+            ...m,
+            sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
+            sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
+            lastUpdated: new Date(),
+          };
+        }
+        return m;
+      }));
+      setLastPriceUpdate(new Date());
+    }
+
+    // Also mark failed tokens as updated
+    for (const market of batch) {
+      if (market.sideA.tokenId && failedTokenIds.current.has(market.sideA.tokenId)) {
+        setMarkets(prev => prev.map(m => 
+          m.id === market.id ? { ...m, lastUpdated: new Date() } : m
+        ));
+      }
+    }
+
+    // Schedule next batch
     if (isPriceUpdatingRef.current) {
       priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, pollInterval);
     }
