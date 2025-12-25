@@ -1,10 +1,11 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMarkets } from '@/contexts/MarketsContext';
 import { DomeTier, TIER_LIMITS } from '@/types/dome';
-import { Settings, Play, Pause, RefreshCw } from 'lucide-react';
+import { Settings, Play, Pause, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 
 export function SettingsPanel() {
   const { tier, setTier } = useAuth();
@@ -15,10 +16,21 @@ export function SettingsPanel() {
     stopDiscovery,
     startPriceUpdates,
     stopPriceUpdates,
-    syncState 
+    syncState,
+    wsStatus,
+    wsSubscriptionCount,
   } = useMarkets();
 
   const limits = TIER_LIMITS[tier];
+
+  const getWsStatusColor = () => {
+    switch (wsStatus) {
+      case 'connected': return 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400';
+      case 'connecting': return 'bg-amber-500/20 text-amber-600 dark:text-amber-400';
+      case 'error': return 'bg-destructive/20 text-destructive';
+      default: return 'bg-muted text-muted-foreground';
+    }
+  };
 
   return (
     <Card className="border-border w-full lg:w-80">
@@ -43,8 +55,28 @@ export function SettingsPanel() {
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            {limits.qps} QPS • {limits.qp10s} per 10s
+            {limits.qps} QPS • {limits.qp10s} per 10s • {limits.subscriptions} WS subs
           </p>
+        </div>
+
+        {/* WebSocket Status */}
+        <div className="space-y-2">
+          <label className="text-xs text-muted-foreground">WebSocket</label>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className={`${getWsStatusColor()} border-0`}>
+              {wsStatus === 'connected' ? (
+                <Wifi className="w-3 h-3 mr-1" />
+              ) : (
+                <WifiOff className="w-3 h-3 mr-1" />
+              )}
+              {wsStatus}
+            </Badge>
+            {wsStatus === 'connected' && wsSubscriptionCount > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {wsSubscriptionCount} sub{wsSubscriptionCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Controls */}
