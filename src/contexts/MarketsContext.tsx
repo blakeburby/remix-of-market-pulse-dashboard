@@ -642,8 +642,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Enforce minimum delay between requests based on tier QPS
-    // Free: 1/sec, Dev: 10/sec, Enterprise: 100/sec (being conservative)
-    const minDelayMs = tier === 'free' ? 1050 : tier === 'dev' ? 110 : 15;
+    // Free: 1 QPS (1000ms), Dev: 100 QPS (10ms), Enterprise: 1000 QPS (1ms)
+    const minDelayMs = tier === 'free' ? 1000 : tier === 'dev' ? 10 : 1;
     const timeSinceLastRequest = now - priceLastRequestTime.current;
     if (timeSinceLastRequest < minDelayMs) {
       priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, minDelayMs - timeSinceLastRequest);

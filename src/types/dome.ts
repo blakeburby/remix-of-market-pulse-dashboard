@@ -6,7 +6,7 @@ export type DomeTier = 'free' | 'dev' | 'enterprise';
 
 // Rate limits per tier
 export const TIER_LIMITS: Record<DomeTier, { qps: number; qp10s: number; subscriptions: number; walletsPerSub: number }> = {
-  free: { qps: 10, qp10s: 10, subscriptions: 2, walletsPerSub: 5 },
+  free: { qps: 1, qp10s: 10, subscriptions: 2, walletsPerSub: 5 },
   dev: { qps: 100, qp10s: 500, subscriptions: 500, walletsPerSub: 500 },
   enterprise: { qps: 1000, qp10s: 5000, subscriptions: 10000, walletsPerSub: 10000 },
 };
