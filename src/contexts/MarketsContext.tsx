@@ -433,11 +433,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     signal?: AbortSignal,
     maxCount?: number
   ) => {
-    // Warm a limited set by default, but allow callers to override (e.g., per-page warmup).
-    const warmCount = maxCount ?? (tier === 'free' ? 50 : 300);
+    // Warm ALL markets - rate limiter handles pacing
+    const warmCount = maxCount ?? (tier === 'free' ? 50 : Infinity);
     const targets = discoveredMarkets
       .filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId)
-      .slice(0, warmCount);
+      .slice(0, warmCount === Infinity ? undefined : warmCount);
 
     if (targets.length === 0) return;
 
@@ -518,8 +518,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const allMarkets: UnifiedMarket[] = [];
     let offset = 0;
     const limit = 100;
-    // Limit total pages for Free tier to avoid long waits
-    const maxPages = tier === 'free' ? 5 : 50;
+    // No page limit - fetch ALL markets from both platforms
+    // Free tier still limited to prevent extremely long waits
+    const maxPages = tier === 'free' ? 5 : Infinity;
     let pageCount = 0;
 
     const baseUrl = platform === 'POLYMARKET'
@@ -755,9 +756,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Limit markets based on tier
-    const maxTracked = tier === 'free' ? 50 : tier === 'dev' ? 500 : 5000;
-    const limitedMarkets = polymarketMarkets.slice(0, Math.min(maxTracked, polymarketMarkets.length));
+    // No limit - fetch prices for ALL Polymarket markets
+    // Rate limiter handles pacing (5500+ requests/minute)
+    const limitedMarkets = polymarketMarkets;
 
     // Prioritize markets without prices yet, then oldest updated
     const sortedMarkets = [...limitedMarkets].sort((a, b) => {
