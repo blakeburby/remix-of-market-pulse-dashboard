@@ -464,43 +464,40 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       setLastPriceUpdate(new Date());
     };
 
-    // Process in parallel batches for much faster loading
+    // Process using streaming for true 100 QPS
     for (let i = 0; i < targets.length; i += BATCH_SIZE) {
       if (signal?.aborted) break;
 
       const batch = targets.slice(i, i + BATCH_SIZE);
+      const promises: Promise<void>[] = [];
       
-      // Acquire all tokens for this batch upfront - enables true parallel requests
-      await globalRateLimiter.acquireMultiple(batch.length);
-      
-      // Fire ALL requests truly in parallel (no per-request rate limiting)
-      const results = await Promise.allSettled(
-        batch.map(async (market) => {
-          const tokenId = market.sideA.tokenId!;
-          
-          const resp = await fetch(
-            `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
-            {
-              headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-              },
-              signal,
-            }
-          );
-          
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      // Use streaming acquisition - fires each request as token becomes available
+      await globalRateLimiter.acquireStream(batch.length, (index) => {
+        const market = batch[index];
+        const tokenId = market.sideA.tokenId!;
+        
+        const promise = fetch(
+          `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            signal,
+          }
+        ).then(async (resp) => {
+          if (!resp.ok) return;
           const data: PolymarketPriceResponse = await resp.json();
-          return { marketId: market.id, price: data.price };
-        })
-      );
-
-      // Collect successful results
-      for (const result of results) {
-        if (result.status === 'fulfilled' && typeof result.value.price === 'number') {
-          pending.set(result.value.marketId, result.value.price);
-        }
-      }
+          if (typeof data.price === 'number') {
+            pending.set(market.id, data.price);
+          }
+        }).catch(() => {});
+        
+        promises.push(promise);
+      });
+      
+      // Wait for batch to complete
+      await Promise.allSettled(promises);
 
       // Flush after each batch for responsive UI updates
       flush();
@@ -769,50 +766,40 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return a.lastUpdated.getTime() - b.lastUpdated.getTime();
     });
 
-    // BATCH SIZE: Use rate limiter's burst capacity + sustained rate
-    // For dev tier: 500 burst + 100/sec sustained = 5500+ per minute
+    // CONTINUOUS STREAMING: Fire requests as fast as rate limiter allows (100/sec)
+    // Don't wait for responses - fire continuously and process results as they come
     const BATCH_SIZE = tier === 'free' ? 5 : 100;
     const batch = sortedMarkets.slice(0, BATCH_SIZE);
     
-    // Use optimized immediate acquisition - starts requests with available tokens NOW
-    const { immediate, waitMs } = globalRateLimiter.acquireImmediate(batch.length);
     priceLastRequestTime.current = Date.now();
-
-    // Fire requests for immediately available tokens
-    const immediatePromises = batch.slice(0, immediate).map(async (market) => {
-      const tokenId = market.sideA.tokenId!;
-      const result = await fetchTokenPriceDirect(tokenId, apiKey);
-      return { price: result.price, rateLimited: result.rateLimited || false, marketId: market.id };
-    });
-
-    // If we need to wait for more tokens, schedule the rest
-    let remainingPromises: Promise<{ price: number | null; rateLimited: boolean; marketId: string }>[] = [];
-    if (waitMs > 0 && immediate < batch.length) {
-      await new Promise(resolve => setTimeout(resolve, waitMs));
-      globalRateLimiter.consumeAfterWait(batch.length - immediate);
-      remainingPromises = batch.slice(immediate).map(async (market) => {
-        const tokenId = market.sideA.tokenId!;
-        const result = await fetchTokenPriceDirect(tokenId, apiKey);
-        return { price: result.price, rateLimited: result.rateLimited || false, marketId: market.id };
-      });
-    }
-
-    // Wait for all requests
-    const results = await Promise.allSettled([...immediatePromises, ...remainingPromises]);
-
-    // Check for rate limiting
-    let wasRateLimited = false;
-    const priceUpdates = new Map<string, number>();
     
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        if (result.value.rateLimited) {
+    // Fire all requests using streaming - each fires as soon as a token is available
+    const priceUpdates = new Map<string, number>();
+    let wasRateLimited = false;
+    
+    // Use acquireStream for true 100 QPS - fires each request exactly when token available
+    const promises: Promise<void>[] = [];
+    
+    await globalRateLimiter.acquireStream(batch.length, (index) => {
+      const market = batch[index];
+      const tokenId = market.sideA.tokenId!;
+      
+      // Fire request immediately when token is acquired
+      const promise = fetchTokenPriceDirect(tokenId, apiKey).then(result => {
+        if (result.rateLimited) {
           wasRateLimited = true;
-        } else if (result.value.price !== null) {
-          priceUpdates.set(result.value.marketId, result.value.price);
+        } else if (result.price !== null) {
+          priceUpdates.set(market.id, result.price);
         }
-      }
-    }
+      }).catch(() => {
+        // Ignore individual failures
+      });
+      
+      promises.push(promise);
+    });
+    
+    // Wait for all in-flight requests to complete
+    await Promise.allSettled(promises);
 
     // Batch update all prices at once
     if (priceUpdates.size > 0 && isPriceUpdatingRef.current) {
@@ -830,13 +817,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       setLastPriceUpdate(new Date());
     }
 
-    // Schedule next batch IMMEDIATELY - no delays, rate limiter handles pacing
+    // Schedule next batch IMMEDIATELY - rate limiter handles pacing
     if (isPriceUpdatingRef.current) {
-      // Use queueMicrotask for minimal overhead, only delay on rate limit
       if (wasRateLimited) {
         priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 1000);
       } else {
-        // Immediate scheduling - rate limiter will pace if needed
+        // Use setImmediate-like behavior for minimal overhead
         priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 0);
       }
     }
