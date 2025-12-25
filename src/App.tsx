@@ -9,6 +9,8 @@ import LoginPage from "./pages/Login";
 import DashboardPage from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
 
+// Force rebuild
+
 const queryClient = new QueryClient();
 
 function AppRoutes() {
