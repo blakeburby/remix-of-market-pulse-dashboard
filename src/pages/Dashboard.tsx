@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMarkets } from '@/contexts/MarketsContext';
@@ -6,12 +6,14 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { MarketFilters } from '@/components/dashboard/MarketFilters';
 import { MarketsTable } from '@/components/dashboard/MarketsTable';
+import { EventsView } from '@/components/dashboard/EventsView';
 import { SettingsPanel } from '@/components/dashboard/SettingsPanel';
 
 export default function DashboardPage() {
   const { isAuthenticated, logout } = useAuth();
   const { summary, syncState } = useMarkets();
   const navigate = useNavigate();
+  const [viewMode, setViewMode] = useState<'flat' | 'grouped'>('grouped');
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -34,13 +36,13 @@ export default function DashboardPage() {
         {/* Filters and Settings Row */}
         <div className="flex flex-col lg:flex-row gap-4 sm:gap-6">
           <div className="flex-1">
-            <MarketFilters />
+            <MarketFilters viewMode={viewMode} onViewModeChange={setViewMode} />
           </div>
           <SettingsPanel />
         </div>
         
-        {/* Markets Table */}
-        <MarketsTable />
+        {/* Markets View - Grouped or Flat */}
+        {viewMode === 'grouped' ? <EventsView /> : <MarketsTable />}
       </main>
     </div>
   );
