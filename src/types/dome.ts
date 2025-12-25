@@ -166,6 +166,12 @@ export interface SyncState {
   isRunning: boolean;
 }
 
+// Discovery Progress
+export interface DiscoveryProgress {
+  polymarket: { offset: number; found: number; hasMore: boolean };
+  kalshi: { offset: number; found: number; hasMore: boolean };
+}
+
 // Dashboard Summary
 export interface DashboardSummary {
   totalMarkets: number;
@@ -177,6 +183,8 @@ export interface DashboardSummary {
   connectionMode: 'websocket' | 'polling' | 'disconnected';
   requestsPerMinute: number;
   marketsWithPrices: number;
+  discoveryProgress: DiscoveryProgress | null;
+  liveRpm: number;
 }
 
 // Filter Options
