@@ -60,13 +60,13 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
                 <div className="flex gap-4 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <CircleDot className="w-3 h-3 text-chart-1" />
-                    Poly: {discoveryProgress.polymarket.found.toLocaleString()}
-                    {discoveryProgress.polymarket.hasMore && <Loader2 className="w-3 h-3 animate-spin" />}
+                    Poly: {discoveryProgress?.polymarket?.found?.toLocaleString() ?? 0}
+                    {discoveryProgress?.polymarket?.hasMore && <Loader2 className="w-3 h-3 animate-spin" />}
                   </span>
                   <span className="flex items-center gap-1">
                     <CircleDot className="w-3 h-3 text-chart-2" />
-                    Kalshi: {discoveryProgress.kalshi.found.toLocaleString()}
-                    {discoveryProgress.kalshi.hasMore && <Loader2 className="w-3 h-3 animate-spin" />}
+                    Kalshi: {discoveryProgress?.kalshi?.found?.toLocaleString() ?? 0}
+                    {discoveryProgress?.kalshi?.hasMore && <Loader2 className="w-3 h-3 animate-spin" />}
                   </span>
                 </div>
               </div>
