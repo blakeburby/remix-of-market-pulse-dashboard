@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { 
   UnifiedMarket, 
   Platform, 
@@ -14,6 +14,7 @@ import {
 import { useAuth } from './AuthContext';
 import { globalRateLimiter } from '@/lib/rate-limiter';
 import { toast } from '@/hooks/use-toast';
+import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
 
 interface MarketsContextType {
   markets: UnifiedMarket[];
@@ -23,6 +24,8 @@ interface MarketsContextType {
   filters: MarketFilters;
   isDiscovering: boolean;
   isPriceUpdating: boolean;
+  wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
+  wsSubscriptionCount: number;
   setFilters: (filters: Partial<MarketFilters>) => void;
   startDiscovery: () => void;
   stopDiscovery: () => void;
@@ -68,10 +71,73 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const isDiscoveringRef = useRef(false);
   const isPriceUpdatingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const [wsEnabled, setWsEnabled] = useState(false);
 
   // Computed values
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isPriceUpdating, setIsPriceUpdating] = useState(false);
+
+  // Get market slugs for WebSocket subscriptions
+  const polymarketSlugs = useMemo(() => 
+    markets
+      .filter(m => m.platform === 'POLYMARKET' && m.marketSlug)
+      .map(m => m.marketSlug!)
+      .slice(0, tier === 'free' ? 10 : 500), // Limit based on tier
+    [markets, tier]
+  );
+
+  // WebSocket price update handler
+  const handleWsPriceUpdate = useCallback((tokenId: string, price: number, timestamp: number) => {
+    setMarkets(prev => prev.map(market => {
+      if (market.sideA.tokenId === tokenId) {
+        return {
+          ...market,
+          sideA: {
+            ...market.sideA,
+            price,
+            probability: price,
+            odds: price > 0 ? 1 / price : null,
+          },
+          sideB: {
+            ...market.sideB,
+            price: 1 - price,
+            probability: 1 - price,
+            odds: (1 - price) > 0 ? 1 / (1 - price) : null,
+          },
+          lastUpdated: new Date(timestamp * 1000),
+        };
+      }
+      if (market.sideB.tokenId === tokenId) {
+        return {
+          ...market,
+          sideA: {
+            ...market.sideA,
+            price: 1 - price,
+            probability: 1 - price,
+            odds: (1 - price) > 0 ? 1 / (1 - price) : null,
+          },
+          sideB: {
+            ...market.sideB,
+            price,
+            probability: price,
+            odds: price > 0 ? 1 / price : null,
+          },
+          lastUpdated: new Date(timestamp * 1000),
+        };
+      }
+      return market;
+    }));
+    setLastPriceUpdate(new Date());
+  }, []);
+
+  // WebSocket connection
+  const { status: wsStatus, subscriptionCount: wsSubscriptionCount, isConnected: wsConnected } = useDomeWebSocket({
+    apiKey: getApiKey(),
+    tier,
+    marketSlugs: polymarketSlugs,
+    onPriceUpdate: handleWsPriceUpdate,
+    enabled: wsEnabled && isAuthenticated,
+  });
 
   // Filter and sort markets
   const filteredMarkets = React.useMemo(() => {
@@ -137,6 +203,14 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       syncState.KALSHI.lastSuccessAt,
     ].filter(Boolean).sort((a, b) => (b?.getTime() || 0) - (a?.getTime() || 0))[0] || null;
 
+    // Determine connection mode
+    let connectionMode: 'websocket' | 'polling' | 'disconnected' = 'disconnected';
+    if (wsConnected) {
+      connectionMode = 'websocket';
+    } else if (isPriceUpdating) {
+      connectionMode = 'polling';
+    }
+
     return {
       totalMarkets: markets.length,
       polymarketCount,
@@ -144,10 +218,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       totalTokensTracked: tokenCount,
       lastDiscoveryTime: lastDiscovery,
       lastPriceUpdateTime: lastPriceUpdate,
-      connectionMode: isPriceUpdating ? 'polling' : 'disconnected',
+      connectionMode,
       requestsPerMinute: globalRateLimiter.getRequestsPerMinute(),
     };
-  }, [markets, syncState, lastPriceUpdate, isPriceUpdating]);
+  }, [markets, syncState, lastPriceUpdate, isPriceUpdating, wsConnected]);
 
   const setFilters = useCallback((newFilters: Partial<MarketFilters>) => {
     setFiltersState(prev => ({ ...prev, ...newFilters }));
@@ -502,15 +576,20 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const startPriceUpdates = useCallback(() => {
+    // Enable WebSocket first
+    setWsEnabled(true);
+    
+    // Also start polling as fallback (will run alongside WS)
     if (isPriceUpdatingRef.current) return;
     isPriceUpdatingRef.current = true;
     setIsPriceUpdating(true);
     
-    // Start price update loop
+    // Start price update loop (polling fallback)
     runPriceUpdate();
   }, [runPriceUpdate]);
 
   const stopPriceUpdates = useCallback(() => {
+    setWsEnabled(false);
     isPriceUpdatingRef.current = false;
     setIsPriceUpdating(false);
     
@@ -534,6 +613,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     } else {
       stopDiscovery();
       stopPriceUpdates();
+      setWsEnabled(false);
       setMarkets([]);
     }
   }, [isAuthenticated]);
@@ -555,6 +635,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       filters,
       isDiscovering,
       isPriceUpdating,
+      wsStatus,
+      wsSubscriptionCount,
       setFilters,
       startDiscovery,
       stopDiscovery,
