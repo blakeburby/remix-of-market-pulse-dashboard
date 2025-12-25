@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DomeTier } from '@/types/dome';
-import { Loader2, KeyRound, TrendingUp, Shield, Zap } from 'lucide-react';
+import { Loader2, KeyRound, Building2, Shield, Zap, BarChart3 } from 'lucide-react';
 
 export default function LoginPage() {
   const [apiKey, setApiKey] = useState('');
@@ -30,38 +30,40 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+      <header className="border-b border-border bg-card shadow-sm">
+        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
-              <TrendingUp className="w-6 h-6 text-primary-foreground" />
+            <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center shadow-md">
+              <Building2 className="w-5 h-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-foreground">Dome Markets</h1>
-              <p className="text-xs text-muted-foreground">Real-time prediction markets</p>
+              <h1 className="text-xl font-semibold tracking-tight text-foreground">Burby Capital</h1>
+              <p className="text-xs text-muted-foreground">Prediction Markets Intelligence</p>
             </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center p-4">
-        <div className="w-full max-w-md space-y-6">
+      <main className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-8">
           {/* Login Card */}
           <Card className="border-border shadow-lg">
-            <CardHeader className="text-center space-y-2">
-              <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-2">
-                <KeyRound className="w-8 h-8 text-primary" />
+            <CardHeader className="text-center space-y-4 pb-2">
+              <div className="mx-auto w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center">
+                <KeyRound className="w-7 h-7 text-primary" />
               </div>
-              <CardTitle className="text-2xl font-bold">Connect to Dome</CardTitle>
-              <CardDescription>
-                Enter your Dome API key to access real-time market data from Polymarket and Kalshi
-              </CardDescription>
+              <div className="space-y-1">
+                <CardTitle className="text-2xl font-semibold tracking-tight">Connect to Dome API</CardTitle>
+                <CardDescription className="text-sm">
+                  Enter your API key to access real-time market data from Polymarket and Kalshi
+                </CardDescription>
+              </div>
             </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
+            <CardContent className="pt-4">
+              <form onSubmit={handleSubmit} className="space-y-5">
                 <div className="space-y-2">
-                  <Label htmlFor="apiKey">API Key</Label>
+                  <Label htmlFor="apiKey" className="text-sm font-medium">API Key</Label>
                   <Input
                     id="apiKey"
                     type="password"
@@ -69,14 +71,14 @@ export default function LoginPage() {
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     disabled={isValidating}
-                    className="font-mono"
+                    className="font-mono h-11"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="tier">API Tier</Label>
+                  <Label htmlFor="tier" className="text-sm font-medium">API Tier</Label>
                   <Select value={tier} onValueChange={(v) => setTier(v as DomeTier)} disabled={isValidating}>
-                    <SelectTrigger id="tier">
+                    <SelectTrigger id="tier" className="h-11">
                       <SelectValue placeholder="Select your tier" />
                     </SelectTrigger>
                     <SelectContent>
@@ -108,7 +110,7 @@ export default function LoginPage() {
                   </Alert>
                 )}
 
-                <Button type="submit" className="w-full" disabled={isValidating || !apiKey.trim()}>
+                <Button type="submit" className="w-full h-11 font-medium" disabled={isValidating || !apiKey.trim()}>
                   {isValidating ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -123,29 +125,29 @@ export default function LoginPage() {
           </Card>
 
           {/* Features */}
-          <div className="grid grid-cols-3 gap-4">
-            <div className="text-center p-4 rounded-lg bg-card border border-border">
-              <TrendingUp className="w-6 h-6 mx-auto mb-2 text-primary" />
+          <div className="grid grid-cols-3 gap-3">
+            <div className="text-center p-4 rounded-xl bg-card border border-border shadow-sm">
+              <BarChart3 className="w-5 h-5 mx-auto mb-2 text-primary" />
               <p className="text-xs font-medium text-foreground">Real-time Data</p>
             </div>
-            <div className="text-center p-4 rounded-lg bg-card border border-border">
-              <Shield className="w-6 h-6 mx-auto mb-2 text-primary" />
-              <p className="text-xs font-medium text-foreground">Secure</p>
+            <div className="text-center p-4 rounded-xl bg-card border border-border shadow-sm">
+              <Shield className="w-5 h-5 mx-auto mb-2 text-primary" />
+              <p className="text-xs font-medium text-foreground">Secure API</p>
             </div>
-            <div className="text-center p-4 rounded-lg bg-card border border-border">
-              <Zap className="w-6 h-6 mx-auto mb-2 text-primary" />
-              <p className="text-xs font-medium text-foreground">Fast Updates</p>
+            <div className="text-center p-4 rounded-xl bg-card border border-border shadow-sm">
+              <Zap className="w-5 h-5 mx-auto mb-2 text-primary" />
+              <p className="text-xs font-medium text-foreground">Live Updates</p>
             </div>
           </div>
 
           {/* Info */}
-          <p className="text-center text-xs text-muted-foreground">
+          <p className="text-center text-sm text-muted-foreground">
             Don't have an API key?{' '}
             <a 
               href="https://domeapi.io" 
               target="_blank" 
               rel="noopener noreferrer"
-              className="text-primary hover:underline"
+              className="text-primary font-medium hover:underline"
             >
               Sign up at domeapi.io
             </a>
@@ -154,9 +156,9 @@ export default function LoginPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-border py-4">
-        <div className="container mx-auto px-4 text-center text-xs text-muted-foreground">
-          <p>Dome Markets Dashboard — Polymarket & Kalshi data via Dome API</p>
+      <footer className="border-t border-border py-4 bg-card">
+        <div className="container mx-auto px-6 text-center text-xs text-muted-foreground">
+          <p>© 2025 Burby Capital — Prediction Markets Intelligence Platform</p>
         </div>
       </footer>
     </div>

@@ -27,12 +27,12 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background">
       <DashboardHeader onLogout={logout} />
       
-      <main className="container mx-auto px-4 py-6 space-y-6">
+      <main className="container mx-auto px-6 py-8 space-y-8">
         {/* Summary Cards */}
         <SummaryCards summary={summary} syncState={syncState} />
         
         {/* Filters and Settings Row */}
-        <div className="flex flex-col lg:flex-row gap-4">
+        <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1">
             <MarketFilters />
           </div>

@@ -25,17 +25,17 @@ export function MarketsTable() {
 
   const getPlatformBadge = (platform: string) => {
     if (platform === 'POLYMARKET') {
-      return <Badge variant="secondary" className="bg-blue-500/20 text-blue-600 dark:text-blue-400 border-0">Polymarket</Badge>;
+      return <Badge variant="secondary" className="bg-chart-1/10 text-chart-1 border-0 font-medium">Polymarket</Badge>;
     }
-    return <Badge variant="secondary" className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-0">Kalshi</Badge>;
+    return <Badge variant="secondary" className="bg-chart-4/10 text-chart-4 border-0 font-medium">Kalshi</Badge>;
   };
 
   if (filteredMarkets.length === 0) {
     return (
-      <Card className="border-border">
-        <CardContent className="p-8 text-center">
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-12 text-center">
           {isDiscovering ? (
-            <div className="flex flex-col items-center gap-3">
+            <div className="flex flex-col items-center gap-4">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
               <p className="text-muted-foreground">Discovering markets...</p>
             </div>
@@ -49,15 +49,15 @@ export function MarketsTable() {
 
   return (
     <>
-      <Card className="border-border overflow-hidden">
+      <Card className="border-border shadow-sm overflow-hidden">
         <ScrollArea className="h-[600px]">
           <div className="min-w-[900px]">
             {/* Header */}
-            <div className="grid grid-cols-12 gap-4 p-4 bg-muted/30 border-b border-border text-sm font-medium text-muted-foreground sticky top-0 z-10">
+            <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide sticky top-0 z-10">
               <div className="col-span-1">Platform</div>
-              <div className="col-span-4">Title</div>
+              <div className="col-span-4">Market</div>
               <div className="col-span-2">Expiration</div>
-              <div className="col-span-2 text-center">Price (¢)</div>
+              <div className="col-span-2 text-center">Price</div>
               <div className="col-span-2 text-center">Probability</div>
               <div className="col-span-1 text-right">Updated</div>
             </div>
@@ -66,7 +66,7 @@ export function MarketsTable() {
             {filteredMarkets.map((market) => (
               <div
                 key={market.id}
-                className="grid grid-cols-12 gap-4 p-4 border-b border-border hover:bg-muted/20 cursor-pointer transition-colors"
+                className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-border hover:bg-muted/30 cursor-pointer transition-colors"
                 onClick={() => setSelectedMarket(market)}
               >
                 {/* Platform */}
@@ -92,26 +92,26 @@ export function MarketsTable() {
                 {/* Prices - show in cents */}
                 <div className="col-span-2 flex items-center justify-center gap-2">
                   <div className="flex items-center gap-1 text-sm">
-                    <ChevronUp className="w-4 h-4 text-green-500" />
-                    <span className="font-mono">{(market.sideA.price * 100).toFixed(1)}¢</span>
+                    <ChevronUp className="w-4 h-4 text-chart-4" />
+                    <span className="font-mono font-medium">{(market.sideA.price * 100).toFixed(1)}¢</span>
                   </div>
                   <span className="text-muted-foreground">/</span>
                   <div className="flex items-center gap-1 text-sm">
-                    <ChevronDown className="w-4 h-4 text-red-500" />
-                    <span className="font-mono">{(market.sideB.price * 100).toFixed(1)}¢</span>
+                    <ChevronDown className="w-4 h-4 text-chart-5" />
+                    <span className="font-mono font-medium">{(market.sideB.price * 100).toFixed(1)}¢</span>
                   </div>
                 </div>
 
                 {/* Probability */}
                 <div className="col-span-2 flex items-center justify-center">
                   <div className="w-full max-w-[120px]">
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-green-500">{formatProbability(market.sideA.probability)}</span>
-                      <span className="text-red-500">{formatProbability(market.sideB.probability)}</span>
+                    <div className="flex justify-between text-xs mb-1.5">
+                      <span className="font-medium text-chart-4">{formatProbability(market.sideA.probability)}</span>
+                      <span className="font-medium text-chart-5">{formatProbability(market.sideB.probability)}</span>
                     </div>
-                    <div className="h-2 bg-red-500/30 rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-chart-5/20 rounded-full overflow-hidden">
                       <div 
-                        className="h-full bg-green-500 rounded-full transition-all duration-500"
+                        className="h-full bg-chart-4 rounded-full transition-all duration-500"
                         style={{ width: `${market.sideA.probability * 100}%` }}
                       />
                     </div>
@@ -130,12 +130,12 @@ export function MarketsTable() {
         </ScrollArea>
 
         {/* Footer */}
-        <div className="p-3 bg-muted/30 border-t border-border flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Showing {filteredMarkets.length} markets
+        <div className="px-6 py-4 bg-muted/30 border-t border-border flex items-center justify-between">
+          <p className="text-sm text-muted-foreground font-medium">
+            {filteredMarkets.length} markets
           </p>
           {isPriceUpdating && (
-            <div className="flex items-center gap-2 text-xs text-primary">
+            <div className="flex items-center gap-2 text-xs text-primary font-medium">
               <Loader2 className="w-3 h-3 animate-spin" />
               <span>Live updates active</span>
             </div>
@@ -162,70 +162,70 @@ export function MarketsTable() {
                 {/* Market Info */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-sm text-muted-foreground">Market ID</p>
+                    <p className="text-sm text-muted-foreground font-medium">Market ID</p>
                     <p className="font-mono text-sm">{selectedMarket.marketSlug || selectedMarket.kalshiMarketTicker}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Status</p>
+                    <p className="text-sm text-muted-foreground font-medium">Status</p>
                     <Badge variant={selectedMarket.status === 'open' ? 'default' : 'secondary'}>
                       {selectedMarket.status}
                     </Badge>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Start Time</p>
+                    <p className="text-sm text-muted-foreground font-medium">Start Time</p>
                     <p className="text-sm">{selectedMarket.startTime.toLocaleString()}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">End Time</p>
+                    <p className="text-sm text-muted-foreground font-medium">End Time</p>
                     <p className="text-sm">{selectedMarket.endTime.toLocaleString()}</p>
                   </div>
                 </div>
 
                 {/* Pricing Table */}
                 <div>
-                  <h4 className="font-medium mb-3">Pricing</h4>
+                  <h4 className="font-semibold mb-3">Pricing</h4>
                   <div className="grid grid-cols-2 gap-4">
-                    <Card className="bg-green-500/10 border-green-500/30">
+                    <Card className="bg-chart-4/5 border-chart-4/20">
                       <CardContent className="p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <ChevronUp className="w-5 h-5 text-green-500" />
-                          <span className="font-medium">{selectedMarket.sideA.label}</span>
+                        <div className="flex items-center gap-2 mb-3">
+                          <ChevronUp className="w-5 h-5 text-chart-4" />
+                          <span className="font-semibold">{selectedMarket.sideA.label}</span>
                         </div>
-                        <div className="space-y-1 text-sm">
+                        <div className="space-y-2 text-sm">
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Price:</span>
-                            <span className="font-mono">{(selectedMarket.sideA.price * 100).toFixed(1)}¢</span>
+                            <span className="font-mono font-medium">{(selectedMarket.sideA.price * 100).toFixed(1)}¢</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Probability:</span>
-                            <span className="font-mono">{formatProbability(selectedMarket.sideA.probability)}</span>
+                            <span className="font-mono font-medium">{formatProbability(selectedMarket.sideA.probability)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Decimal Odds:</span>
-                            <span className="font-mono">{formatOdds(selectedMarket.sideA.odds)}x</span>
+                            <span className="font-mono font-medium">{formatOdds(selectedMarket.sideA.odds)}x</span>
                           </div>
                         </div>
                       </CardContent>
                     </Card>
 
-                    <Card className="bg-red-500/10 border-red-500/30">
+                    <Card className="bg-chart-5/5 border-chart-5/20">
                       <CardContent className="p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <ChevronDown className="w-5 h-5 text-red-500" />
-                          <span className="font-medium">{selectedMarket.sideB.label}</span>
+                        <div className="flex items-center gap-2 mb-3">
+                          <ChevronDown className="w-5 h-5 text-chart-5" />
+                          <span className="font-semibold">{selectedMarket.sideB.label}</span>
                         </div>
-                        <div className="space-y-1 text-sm">
+                        <div className="space-y-2 text-sm">
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Price:</span>
-                            <span className="font-mono">{(selectedMarket.sideB.price * 100).toFixed(1)}¢</span>
+                            <span className="font-mono font-medium">{(selectedMarket.sideB.price * 100).toFixed(1)}¢</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Probability:</span>
-                            <span className="font-mono">{formatProbability(selectedMarket.sideB.probability)}</span>
+                            <span className="font-mono font-medium">{formatProbability(selectedMarket.sideB.probability)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Decimal Odds:</span>
-                            <span className="font-mono">{formatOdds(selectedMarket.sideB.odds)}x</span>
+                            <span className="font-mono font-medium">{formatOdds(selectedMarket.sideB.odds)}x</span>
                           </div>
                         </div>
                       </CardContent>
@@ -236,8 +236,8 @@ export function MarketsTable() {
                 {/* Token IDs (for Polymarket) */}
                 {selectedMarket.sideA.tokenId && (
                   <div>
-                    <h4 className="font-medium mb-3">Token IDs</h4>
-                    <div className="space-y-2 text-xs font-mono bg-muted/30 p-3 rounded-lg">
+                    <h4 className="font-semibold mb-3">Token IDs</h4>
+                    <div className="space-y-2 text-xs font-mono bg-muted/50 p-4 rounded-lg">
                       <div>
                         <span className="text-muted-foreground">Side A: </span>
                         <span className="break-all">{selectedMarket.sideA.tokenId}</span>
