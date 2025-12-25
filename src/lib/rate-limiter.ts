@@ -125,6 +125,13 @@ export class RateLimiter {
     const timeSinceLastRequest = Date.now() - this.lastRequestTime;
     return timeSinceLastRequest >= intervalMs ? 1 : 0;
   }
+
+  // Track a request without waiting - for non-blocking fire-and-forget
+  trackRequest(): void {
+    this.lastRequestTime = Date.now();
+    this.requestsInLastMinute.push(this.lastRequestTime);
+    this.cleanupOldRequests();
+  }
 }
 
 // Global rate limiter instance
