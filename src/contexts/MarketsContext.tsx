@@ -79,13 +79,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isPriceUpdating, setIsPriceUpdating] = useState(false);
 
-  // Get market slugs for WebSocket subscriptions
+  // Get market slugs for WebSocket subscriptions - no limit
   const polymarketSlugs = useMemo(() => 
     markets
       .filter(m => m.platform === 'POLYMARKET' && m.marketSlug)
-      .map(m => m.marketSlug!)
-      .slice(0, tier === 'free' ? 10 : 500), // Limit based on tier
-    [markets, tier]
+      .map(m => m.marketSlug!),
+    [markets]
   );
 
   // WebSocket price update handler
@@ -433,11 +432,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     signal?: AbortSignal,
     maxCount?: number
   ) => {
-    // Warm ALL markets - rate limiter handles pacing
-    const warmCount = maxCount ?? (tier === 'free' ? 50 : Infinity);
+    // Warm ALL markets - no limits, rate limiter handles pacing
     const targets = discoveredMarkets
-      .filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId)
-      .slice(0, warmCount === Infinity ? undefined : warmCount);
+      .filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId);
 
     if (targets.length === 0) return;
 
@@ -515,10 +512,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const allMarkets: UnifiedMarket[] = [];
     let offset = 0;
     const limit = 100;
-    // No page limit - fetch ALL markets from both platforms
-    // Free tier still limited to prevent extremely long waits
-    const maxPages = tier === 'free' ? 5 : Infinity;
-    let pageCount = 0;
+    // No page limit - fetch EVERY market from both platforms
 
     const baseUrl = platform === 'POLYMARKET'
       ? 'https://api.domeapi.io/v1/polymarket/markets'
@@ -530,7 +524,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }));
 
     try {
-      while (pageCount < maxPages) {
+      // Loop until no more pages - no artificial limit
+      while (true) {
         if (signal?.aborted) break;
 
         const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}`;
@@ -558,7 +553,6 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         }
 
         offset += limit;
-        pageCount++;
       }
 
       setSyncState(prev => ({
