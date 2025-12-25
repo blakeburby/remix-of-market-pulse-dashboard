@@ -476,21 +476,63 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getApiKey, tier]);
 
+  // Track failed token IDs to avoid retrying them
+  const failedTokenIds = useRef<Set<string>>(new Set());
+
   // Fetch price for a Polymarket token
   const fetchTokenPrice = async (tokenId: string, apiKey: string, signal?: AbortSignal): Promise<number | null> => {
+    // Skip tokens that have already failed with 404
+    if (failedTokenIds.current.has(tokenId)) {
+      return null;
+    }
+
     try {
-      const response = await rateLimitedFetch(
+      // Wait for rate limiter
+      await globalRateLimiter.waitAndAcquire();
+      
+      if (signal?.aborted) {
+        return null;
+      }
+
+      const response = await fetch(
         `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
-        apiKey,
-        signal,
-        2 // Fewer retries for price updates
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          signal,
+        }
       );
 
+      if (response.status === 404) {
+        // Token not found - mark as failed and don't retry
+        console.log(`[Price] Token ${tokenId.slice(0, 8)}... not found (404), skipping future requests`);
+        failedTokenIds.current.add(tokenId);
+        return null;
+      }
+
+      if (response.status === 429) {
+        // Rate limited - wait and return null, will retry next cycle
+        const waitTime = 5000 + Math.random() * 2000;
+        console.log(`[Price] Rate limited, waiting ${Math.round(waitTime)}ms...`);
+        await sleep(waitTime);
+        return null;
+      }
+
+      if (!response.ok) {
+        console.error(`[Price] API error for ${tokenId.slice(0, 8)}...: ${response.status}`);
+        return null;
+      }
+
       const data: PolymarketPriceResponse = await response.json();
-      console.log(`[Price] Fetched price for token ${tokenId.slice(0, 8)}...: ${data.price}`);
+      console.log(`[Price] Token ${tokenId.slice(0, 8)}...: ${(data.price * 100).toFixed(1)}%`);
       return data.price;
     } catch (error) {
-      console.error(`[Price] Failed to fetch price for ${tokenId}:`, error);
+      if ((error as Error).name === 'AbortError') {
+        return null;
+      }
+      console.error(`[Price] Failed to fetch price for ${tokenId.slice(0, 8)}...:`, error);
       return null;
     }
   };
@@ -510,7 +552,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
 
     const currentMarkets = marketsRef.current;
-    const polymarketMarkets = currentMarkets.filter(m => m.platform === 'POLYMARKET' && (m.sideA.tokenId || m.sideB.tokenId));
+    // Filter out markets with tokens that have failed (404)
+    const polymarketMarkets = currentMarkets.filter(m => 
+      m.platform === 'POLYMARKET' && 
+      m.sideA.tokenId && 
+      !failedTokenIds.current.has(m.sideA.tokenId)
+    );
     
     if (polymarketMarkets.length === 0) {
       // No markets yet, check again soon
@@ -519,11 +566,14 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Pick the oldest updated market
-    const sortedMarkets = [...polymarketMarkets].sort(
-      (a, b) => a.lastUpdated.getTime() - b.lastUpdated.getTime()
-    );
-    const market = sortedMarkets[0];
+    // Pick the oldest updated market that hasn't been updated recently
+    const now = Date.now();
+    const staleThreshold = 30000; // 30 seconds
+    const sortedMarkets = [...polymarketMarkets]
+      .filter(m => now - m.lastUpdated.getTime() > staleThreshold || m.lastUpdated.getTime() === 0)
+      .sort((a, b) => a.lastUpdated.getTime() - b.lastUpdated.getTime());
+    
+    const market = sortedMarkets[0] || polymarketMarkets[0];
 
     if (market.sideA.tokenId) {
       const priceA = await fetchTokenPrice(market.sideA.tokenId, apiKey);
@@ -551,14 +601,24 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           return m;
         }));
         setLastPriceUpdate(new Date());
+      } else if (priceA === null && failedTokenIds.current.has(market.sideA.tokenId)) {
+        // Mark this market as updated so we don't keep trying it
+        setMarkets(prev => prev.map(m => {
+          if (m.id === market.id) {
+            return { ...m, lastUpdated: new Date() };
+          }
+          return m;
+        }));
       }
     }
 
-    // Schedule next price update - faster polling
+    // Schedule next price update based on tier
+    // Free tier: slower polling to avoid rate limits
+    const pollInterval = tier === 'free' ? 1200 : 100;
     if (isPriceUpdatingRef.current) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 50);
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, pollInterval);
     }
-  }, [getApiKey]);
+  }, [getApiKey, tier]);
 
   const startDiscovery = useCallback(() => {
     if (isDiscoveringRef.current) return;
