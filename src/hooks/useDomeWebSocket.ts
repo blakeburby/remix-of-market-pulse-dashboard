@@ -178,15 +178,23 @@ export function useDomeWebSocket({
     return cleanup;
   }, [enabled, apiKey, marketSlugs.length > 0]);
 
-  // Resubscribe when market list changes significantly
+  // Only reconnect when market count changes significantly (>20% change)
+  const prevMarketCountRef = useRef(0);
   useEffect(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN && marketSlugs.length > 0) {
-      // For simplicity, reconnect to update subscriptions
-      // A more sophisticated approach would track and update subscriptions
-      console.log('[WS] Market list changed, reconnecting...');
+    const prevCount = prevMarketCountRef.current;
+    const currCount = marketSlugs.length;
+    prevMarketCountRef.current = currCount;
+    
+    // Skip if no significant change or not connected
+    if (wsRef.current?.readyState !== WebSocket.OPEN || currCount === 0) return;
+    
+    // Only reconnect if count changed by more than 20% or first time
+    const changeRatio = prevCount > 0 ? Math.abs(currCount - prevCount) / prevCount : 1;
+    if (changeRatio > 0.2) {
+      console.log(`[WS] Market list changed significantly (${prevCount} -> ${currCount}), reconnecting...`);
       connect();
     }
-  }, [marketSlugs.join(',')]);
+  }, [marketSlugs.length, connect]);
 
   return {
     status,

@@ -593,7 +593,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Run discovery for both platforms sequentially
+  // Run discovery for both platforms in parallel
   const runDiscovery = useCallback(async () => {
     if (!isDiscoveringRef.current) return;
 
@@ -604,72 +604,48 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       const apiKey = getApiKey();
       if (!apiKey) return;
 
-      // Fetch Polymarket first
-      const polymarketMarkets = await fetchPlatformMarkets('POLYMARKET', signal);
+      // Fetch BOTH platforms in parallel for faster discovery
+      const [polymarketMarkets, kalshiMarkets] = await Promise.all([
+        fetchPlatformMarkets('POLYMARKET', signal),
+        fetchPlatformMarkets('KALSHI', signal),
+      ]);
 
       if (signal.aborted) return;
 
-      // Update markets with Polymarket data (preserve any already-warmed/live prices)
+      // Single setMarkets call - merge both platforms at once
       setMarkets(prev => {
         const existing = new Map(prev.map(m => [m.id, m]));
+        
+        // Process Polymarket markets
         for (const market of polymarketMarkets) {
           const prevMarket = existing.get(market.id);
           if (prevMarket && prevMarket.platform === 'POLYMARKET') {
             existing.set(market.id, {
               ...market,
-              sideA: {
-                ...market.sideA,
-                price: prevMarket.sideA.price,
-                probability: prevMarket.sideA.probability,
-                odds: prevMarket.sideA.odds,
-              },
-              sideB: {
-                ...market.sideB,
-                price: prevMarket.sideB.price,
-                probability: prevMarket.sideB.probability,
-                odds: prevMarket.sideB.odds,
-              },
+              sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
+              sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
               lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
             });
           } else {
             existing.set(market.id, market);
           }
         }
-        return Array.from(existing.values());
-      });
-      if (signal.aborted) return;
-
-      // Then fetch Kalshi
-      const kalshiMarkets = await fetchPlatformMarkets('KALSHI', signal);
-      
-      if (signal.aborted) return;
-
-      // Update markets with Kalshi data (preserve any already-warmed/live prices)
-      setMarkets(prev => {
-        const existing = new Map(prev.map(m => [m.id, m]));
+        
+        // Process Kalshi markets
         for (const market of kalshiMarkets) {
           const prevMarket = existing.get(market.id);
           if (prevMarket && prevMarket.platform === 'KALSHI') {
             existing.set(market.id, {
               ...market,
-              sideA: {
-                ...market.sideA,
-                price: prevMarket.sideA.price,
-                probability: prevMarket.sideA.probability,
-                odds: prevMarket.sideA.odds,
-              },
-              sideB: {
-                ...market.sideB,
-                price: prevMarket.sideB.price,
-                probability: prevMarket.sideB.probability,
-                odds: prevMarket.sideB.odds,
-              },
+              sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
+              sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
               lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
             });
           } else {
             existing.set(market.id, market);
           }
         }
+        
         return Array.from(existing.values());
       });
 
@@ -745,7 +721,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const filteredMarketsRef = useRef(filteredMarkets);
   filteredMarketsRef.current = filteredMarkets;
 
-  // Sequential price update with proper rate limiting
+  // Batched price update for maximum throughput
   const runPriceUpdate = useCallback(async () => {
     if (!isPriceUpdatingRef.current) return;
 
@@ -763,20 +739,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Don't skip during discovery - run price updates in parallel
-    // Discovery uses its own rate limiting via globalRateLimiter
-
-    // Enforce minimum delay between requests based on tier QPS
-    // Free: 1 QPS (1000ms), Dev: 100 QPS (10ms), Enterprise: 1000 QPS (1ms)
-    const minDelayMs = tier === 'free' ? 1000 : tier === 'dev' ? 10 : 1;
-    const timeSinceLastRequest = now - priceLastRequestTime.current;
-    if (timeSinceLastRequest < minDelayMs) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, minDelayMs - timeSinceLastRequest);
-      return;
-    }
-
-    // IMPORTANT: update *visible/filtered* markets first so the UI actually looks "live".
-    // Fall back to all markets if the filter is excluding everything.
+    // Get markets to update - prioritize filtered/visible markets
     const candidateMarkets = filteredMarketsRef.current.length > 0
       ? filteredMarketsRef.current
       : marketsRef.current;
@@ -792,7 +755,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // On the free tier, limit how many markets we rotate through to keep updates perceptibly fast.
+    // Limit markets based on tier
     const maxTracked = tier === 'free' ? 50 : tier === 'dev' ? 500 : 5000;
     const limitedMarkets = polymarketMarkets.slice(0, Math.min(maxTracked, polymarketMarkets.length));
 
@@ -805,43 +768,56 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return a.lastUpdated.getTime() - b.lastUpdated.getTime();
     });
 
-    // Get the next market to update
-    const market = sortedMarkets[0];
+    // BATCH SIZE: Use rate limiter to fetch many at once
+    const BATCH_SIZE = tier === 'free' ? 5 : 100;
+    const batch = sortedMarkets.slice(0, BATCH_SIZE);
+    
+    // Acquire tokens for entire batch
+    await globalRateLimiter.acquireMultiple(batch.length);
     priceLastRequestTime.current = Date.now();
 
-    const result = await fetchTokenPriceDirect(market.sideA.tokenId!, apiKey);
+    // Fire all requests in parallel
+    const results = await Promise.allSettled(
+      batch.map(async (market) => {
+        const tokenId = market.sideA.tokenId!;
+        return fetchTokenPriceDirect(tokenId, apiKey).then(r => ({ ...r, marketId: market.id }));
+      })
+    );
 
-    if (result.rateLimited) {
-      // Already set rateLimitedUntil, just schedule next check
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 100);
-      return;
+    // Check for rate limiting
+    let wasRateLimited = false;
+    const priceUpdates = new Map<string, number>();
+    
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        if (result.value.rateLimited) {
+          wasRateLimited = true;
+        } else if (result.value.price !== null) {
+          priceUpdates.set(result.value.marketId, result.value.price);
+        }
+      }
     }
 
-    if (result.price !== null && isPriceUpdatingRef.current) {
-      const priceA = result.price;
-      const priceB = 1 - priceA;
+    // Batch update all prices at once
+    if (priceUpdates.size > 0 && isPriceUpdatingRef.current) {
       setMarkets(prev => prev.map(m => {
-        if (m.id === market.id) {
-          return {
-            ...m,
-            sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
-            sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
-            lastUpdated: new Date(),
-          };
-        }
-        return m;
+        const priceA = priceUpdates.get(m.id);
+        if (priceA === undefined) return m;
+        const priceB = 1 - priceA;
+        return {
+          ...m,
+          sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
+          sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
+          lastUpdated: new Date(),
+        };
       }));
       setLastPriceUpdate(new Date());
-    } else if (failedTokenIds.current.has(market.sideA.tokenId!)) {
-      // Mark failed market as updated so we skip it
-      setMarkets(prev => prev.map(m => 
-        m.id === market.id ? { ...m, lastUpdated: new Date() } : m
-      ));
     }
 
-    // Schedule next update - use minimal delay, rate limiting handles the rest
+    // Schedule next batch
     if (isPriceUpdatingRef.current) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 10);
+      // Small delay to prevent tight loop, rate limiter handles actual pacing
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, wasRateLimited ? 1000 : 50);
     }
   }, [getApiKey, tier]);
 
