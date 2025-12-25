@@ -22,7 +22,7 @@ export class RateLimiter {
     return this.tier;
   }
 
-  private getIntervalMs(): number {
+  public getIntervalMs(): number {
     // Exact interval between requests: 1000ms / QPS
     // For dev tier (100 QPS): 10ms between requests
     const limit = TIER_LIMITS[this.tier];
