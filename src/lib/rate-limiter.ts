@@ -138,6 +138,69 @@ export class RateLimiter {
     }
   }
 
+  // Stream-based token acquisition for maximum throughput
+  // Fires callback as soon as each token is available
+  async acquireStream(count: number, onTokenAvailable: (index: number) => void): Promise<void> {
+    const limit = TIER_LIMITS[this.tier];
+    
+    for (let i = 0; i < count; i++) {
+      this.refill();
+      
+      // If token available, fire immediately
+      if (this.tokens >= 1) {
+        this.tokens -= 1;
+        const now = Date.now();
+        this.lastRequestTime = now;
+        this.requestsInLastMinute.push(now);
+        onTokenAvailable(i);
+        continue;
+      }
+      
+      // Wait for next token to refill (1/qps seconds)
+      const waitTime = Math.ceil(1000 / limit.qps);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      this.refill();
+      this.tokens -= 1;
+      const now = Date.now();
+      this.lastRequestTime = now;
+      this.requestsInLastMinute.push(now);
+      onTokenAvailable(i);
+    }
+  }
+
+  // Optimized batch acquire that starts requests immediately with available tokens
+  // Returns number of tokens available now, and schedules callback for the rest
+  acquireImmediate(count: number): { immediate: number; waitMs: number } {
+    const limit = TIER_LIMITS[this.tier];
+    this.refill();
+    
+    const immediate = Math.min(Math.floor(this.tokens), count);
+    const remaining = count - immediate;
+    
+    if (immediate > 0) {
+      this.tokens -= immediate;
+      const now = Date.now();
+      this.lastRequestTime = now;
+      for (let i = 0; i < immediate; i++) {
+        this.requestsInLastMinute.push(now);
+      }
+    }
+    
+    const waitMs = remaining > 0 ? Math.ceil((remaining / limit.qps) * 1000) : 0;
+    return { immediate, waitMs };
+  }
+
+  // Consume tokens after waiting (called after waitMs from acquireImmediate)
+  consumeAfterWait(count: number): void {
+    this.refill();
+    this.tokens -= count;
+    const now = Date.now();
+    this.lastRequestTime = now;
+    for (let i = 0; i < count; i++) {
+      this.requestsInLastMinute.push(now);
+    }
+  }
+
   getRequestsPerMinute(): number {
     this.refill(); // This also cleans up old timestamps
     return this.requestsInLastMinute.length;
