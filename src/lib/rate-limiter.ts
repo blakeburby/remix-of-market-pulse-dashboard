@@ -39,26 +39,13 @@ export class RateLimiter {
     this.requestsInLastMinute = this.requestsInLastMinute.filter(t => t > oneMinuteAgo);
   }
 
-  private getMinDelayMs(): number {
-    // Calculate minimum delay between requests based on QPS
-    const limit = TIER_LIMITS[this.tier];
-    return Math.ceil(1000 / limit.qps);
-  }
-
+  // For parallel batch requests - no per-request delays needed
   async acquire(): Promise<boolean> {
     this.refill();
     
-    const now = Date.now();
-    const minDelay = this.getMinDelayMs();
-    const timeSinceLastRequest = now - this.lastRequestTime;
-    
-    // Must respect QPS limit - can't make requests faster than 1/qps seconds apart
-    if (timeSinceLastRequest < minDelay) {
-      return false;
-    }
-    
     if (this.tokens >= 1) {
       this.tokens -= 1;
+      const now = Date.now();
       this.lastRequestTime = now;
       this.requestsInLastMinute.push(now);
       return true;
@@ -69,22 +56,11 @@ export class RateLimiter {
 
   async waitAndAcquire(): Promise<void> {
     const limit = TIER_LIMITS[this.tier];
-    const minDelay = this.getMinDelayMs();
     
     while (true) {
       this.refill();
       
-      const now = Date.now();
-      const timeSinceLastRequest = now - this.lastRequestTime;
-      
-      // If we need to wait for QPS limit, calculate exact wait time
-      if (timeSinceLastRequest < minDelay) {
-        const waitTime = minDelay - timeSinceLastRequest + 50; // Add 50ms buffer
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-        continue;
-      }
-      
-      // Check if we have tokens available
+      // Check if we have tokens available - no artificial delays
       if (this.tokens >= 1) {
         this.tokens -= 1;
         this.lastRequestTime = Date.now();
@@ -92,8 +68,8 @@ export class RateLimiter {
         return;
       }
       
-      // Wait for token refill
-      const waitForToken = Math.ceil(1000 / limit.qps) + 50;
+      // Wait exactly 1/qps seconds for next token - no buffer
+      const waitForToken = Math.ceil(1000 / limit.qps);
       await new Promise(resolve => setTimeout(resolve, waitForToken));
     }
   }
