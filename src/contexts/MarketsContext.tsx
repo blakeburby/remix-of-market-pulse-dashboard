@@ -70,6 +70,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   const discoveryIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const priceUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const priceDispatchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isDiscoveringRef = useRef(false);
   const isPriceUpdatingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -713,94 +714,55 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const filteredMarketsRef = useRef(filteredMarkets);
   filteredMarketsRef.current = filteredMarkets;
 
-  // Batched price update for maximum throughput
-  const runPriceUpdate = useCallback(async () => {
+  // Steady 100 QPS dispatcher (no burst): one request every 10ms (dev tier)
+  const priceCursorRef = useRef(0);
+  const lastQpsLogAtRef = useRef(0);
+
+  const dispatchOnePriceFetch = useCallback(async () => {
     if (!isPriceUpdatingRef.current) return;
 
     const apiKey = getApiKey();
-    if (!apiKey) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 2000);
-      return;
-    }
+    if (!apiKey) return;
 
-    // Check if we're rate limited
+    // Backoff if API told us to
     const now = Date.now();
-    if (now < priceRateLimitedUntil.current) {
-      const waitTime = priceRateLimitedUntil.current - now + 100;
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, waitTime);
-      return;
-    }
+    if (now < priceRateLimitedUntil.current) return;
 
-    // Get markets to update - prioritize filtered/visible markets
     const candidateMarkets = filteredMarketsRef.current.length > 0
       ? filteredMarketsRef.current
       : marketsRef.current;
 
-    const polymarketMarkets = candidateMarkets.filter(m =>
+    const tokenMarkets = candidateMarkets.filter(m =>
       m.platform === 'POLYMARKET' &&
       m.sideA.tokenId &&
       !failedTokenIds.current.has(m.sideA.tokenId)
     );
 
-    if (polymarketMarkets.length === 0) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 1000);
+    if (tokenMarkets.length === 0) return;
+
+    // Round-robin through all tokens
+    const idx = priceCursorRef.current % tokenMarkets.length;
+    priceCursorRef.current = idx + 1;
+    const market = tokenMarkets[idx];
+    const tokenId = market.sideA.tokenId!;
+
+    // Enforce steady pacing here as well (no burst) in case interval drifts
+    await globalRateLimiter.waitAndAcquire();
+
+    const result = await fetchTokenPriceDirect(tokenId, apiKey);
+
+    if (!isPriceUpdatingRef.current) return;
+
+    if (result.rateLimited) {
+      // fetchTokenPriceDirect sets priceRateLimitedUntil
       return;
     }
 
-    // No limit - fetch prices for ALL Polymarket markets
-    // Rate limiter handles pacing (5500+ requests/minute)
-    const limitedMarkets = polymarketMarkets;
-
-    // Prioritize markets without prices yet, then oldest updated
-    const sortedMarkets = [...limitedMarkets].sort((a, b) => {
-      const aHasPrice = Math.abs(a.sideA.probability - 0.5) > 0.001;
-      const bHasPrice = Math.abs(b.sideA.probability - 0.5) > 0.001;
-      if (!aHasPrice && bHasPrice) return -1;
-      if (aHasPrice && !bHasPrice) return 1;
-      return a.lastUpdated.getTime() - b.lastUpdated.getTime();
-    });
-
-    // CONTINUOUS STREAMING: Fire requests as fast as rate limiter allows (100/sec)
-    // Don't wait for responses - fire continuously and process results as they come
-    const BATCH_SIZE = tier === 'free' ? 5 : 100;
-    const batch = sortedMarkets.slice(0, BATCH_SIZE);
-    
-    priceLastRequestTime.current = Date.now();
-    
-    // Fire all requests using streaming - each fires as soon as a token is available
-    const priceUpdates = new Map<string, number>();
-    let wasRateLimited = false;
-    
-    // Use acquireStream for true 100 QPS - fires each request exactly when token available
-    const promises: Promise<void>[] = [];
-    
-    await globalRateLimiter.acquireStream(batch.length, (index) => {
-      const market = batch[index];
-      const tokenId = market.sideA.tokenId!;
-      
-      // Fire request immediately when token is acquired
-      const promise = fetchTokenPriceDirect(tokenId, apiKey).then(result => {
-        if (result.rateLimited) {
-          wasRateLimited = true;
-        } else if (result.price !== null) {
-          priceUpdates.set(market.id, result.price);
-        }
-      }).catch(() => {
-        // Ignore individual failures
-      });
-      
-      promises.push(promise);
-    });
-    
-    // Wait for all in-flight requests to complete
-    await Promise.allSettled(promises);
-
-    // Batch update all prices at once
-    if (priceUpdates.size > 0 && isPriceUpdatingRef.current) {
+    if (typeof result.price === 'number') {
+      const priceA = result.price;
+      const priceB = 1 - priceA;
       setMarkets(prev => prev.map(m => {
-        const priceA = priceUpdates.get(m.id);
-        if (priceA === undefined) return m;
-        const priceB = 1 - priceA;
+        if (m.id !== market.id) return m;
         return {
           ...m,
           sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
@@ -811,16 +773,40 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       setLastPriceUpdate(new Date());
     }
 
-    // Schedule next batch IMMEDIATELY - rate limiter handles pacing
-    if (isPriceUpdatingRef.current) {
-      if (wasRateLimited) {
-        priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 1000);
-      } else {
-        // Use setImmediate-like behavior for minimal overhead
-        priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 0);
-      }
+    // Debug: log achieved RPM every ~5s
+    const logNow = Date.now();
+    if (logNow - lastQpsLogAtRef.current > 5000) {
+      lastQpsLogAtRef.current = logNow;
+      console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} intervalMs=${globalRateLimiter.getIntervalMs()} tokens=${tokenMarkets.length}`);
     }
-  }, [getApiKey, tier]);
+  }, [getApiKey]);
+
+  const startSteadyPriceLoop = useCallback(() => {
+    if (priceDispatchIntervalRef.current) return;
+
+    const intervalMs = globalRateLimiter.getIntervalMs();
+
+    // Fire immediately once, then steady interval.
+    void dispatchOnePriceFetch();
+
+    priceDispatchIntervalRef.current = setInterval(() => {
+      // Do not await inside interval callback; keep steady cadence.
+      void dispatchOnePriceFetch();
+    }, intervalMs);
+  }, [dispatchOnePriceFetch]);
+
+  const stopSteadyPriceLoop = useCallback(() => {
+    if (priceDispatchIntervalRef.current) {
+      clearInterval(priceDispatchIntervalRef.current);
+      priceDispatchIntervalRef.current = null;
+    }
+  }, []);
+
+  // Backwards-compat: keep runPriceUpdate but it just ensures steady loop is running.
+  const runPriceUpdate = useCallback(async () => {
+    if (!isPriceUpdatingRef.current) return;
+    startSteadyPriceLoop();
+  }, [startSteadyPriceLoop]);
 
   const startDiscovery = useCallback(() => {
     if (isDiscoveringRef.current) return;
@@ -868,26 +854,27 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     if (tier !== 'free') {
       setWsEnabled(true);
     }
-    
-    // Start polling for prices
+
     if (isPriceUpdatingRef.current) return;
     isPriceUpdatingRef.current = true;
     setIsPriceUpdating(true);
-    
-    // Start price update loop
-    runPriceUpdate();
-  }, [runPriceUpdate, tier]);
+
+    // Start steady (no-burst) loop
+    startSteadyPriceLoop();
+  }, [startSteadyPriceLoop, tier]);
 
   const stopPriceUpdates = useCallback(() => {
     setWsEnabled(false);
     isPriceUpdatingRef.current = false;
     setIsPriceUpdating(false);
-    
+
+    stopSteadyPriceLoop();
+
     if (priceUpdateTimeoutRef.current) {
       clearTimeout(priceUpdateTimeoutRef.current);
       priceUpdateTimeoutRef.current = null;
     }
-  }, []);
+  }, [stopSteadyPriceLoop]);
 
   // Auto-start discovery when authenticated
   useEffect(() => {
