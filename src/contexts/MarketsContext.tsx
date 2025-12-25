@@ -826,20 +826,17 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     isDiscoveringRef.current = true;
     setIsDiscovering(true);
 
-    // Initial discovery
-    runDiscovery();
-
-    // Automatically start price updates when discovery starts
-    if (!isPriceUpdatingRef.current) {
-      isPriceUpdatingRef.current = true;
-      setIsPriceUpdating(true);
-      // Delay slightly to let first markets load
-      setTimeout(() => {
-        if (isPriceUpdatingRef.current) {
+    // Initial discovery - warmup happens inside runDiscovery via priceWarmupChainRef
+    runDiscovery().then(() => {
+      // Wait for warmup chain to complete before starting price update loop
+      priceWarmupChainRef.current.then(() => {
+        if (!isPriceUpdatingRef.current && isDiscoveringRef.current) {
+          isPriceUpdatingRef.current = true;
+          setIsPriceUpdating(true);
           runPriceUpdate();
         }
-      }, 2000);
-    }
+      });
+    });
 
     // Schedule periodic rediscovery (longer interval for Free tier)
     const intervalMs = tier === 'free' ? 120000 : 60000;
