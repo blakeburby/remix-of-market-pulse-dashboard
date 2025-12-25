@@ -98,6 +98,31 @@ export class RateLimiter {
     }
   }
 
+  // Acquire multiple tokens at once for true parallel requests
+  async acquireMultiple(count: number): Promise<void> {
+    const limit = TIER_LIMITS[this.tier];
+    
+    while (true) {
+      this.refill();
+      
+      if (this.tokens >= count) {
+        this.tokens -= count;
+        const now = Date.now();
+        this.lastRequestTime = now;
+        // Log all requests as happening now
+        for (let i = 0; i < count; i++) {
+          this.requestsInLastMinute.push(now);
+        }
+        return;
+      }
+      
+      // Wait for enough tokens to accumulate
+      const tokensNeeded = count - this.tokens;
+      const waitTime = Math.ceil((tokensNeeded / limit.qps) * 1000) + 50;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+
   getRequestsPerMinute(): number {
     this.refill(); // This also cleans up old timestamps
     return this.requestsInLastMinute.length;
