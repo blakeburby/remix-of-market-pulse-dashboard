@@ -216,10 +216,10 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
               </div>
               <div className="min-w-0">
                 <p className="text-xs sm:text-sm font-semibold text-foreground truncate">
-                  {hasErrors ? 'Error' : `${summary.requestsPerMinute}/m`}
+                  {hasErrors ? 'Error' : `${liveRpm || summary.requestsPerMinute}/m`}
                 </p>
                 <p className="text-[10px] sm:text-xs text-muted-foreground font-medium">
-                  {hasErrors ? 'Error' : 'Req'}
+                  {hasErrors ? 'Error' : 'RPM'}
                 </p>
               </div>
             </div>
