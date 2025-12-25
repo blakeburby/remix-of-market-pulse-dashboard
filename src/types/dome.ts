@@ -77,6 +77,8 @@ export interface UnifiedMarket {
   id: string;
   platform: Platform;
   title: string;
+  eventSlug?: string; // For grouping markets by event
+  eventTitle?: string; // Display title for the event
   marketSlug?: string;
   conditionId?: string;
   kalshiMarketTicker?: string;
@@ -102,6 +104,18 @@ export interface UnifiedMarket {
   volume?: number;
   volume24h?: number;
   lastUpdated: Date;
+}
+
+// Grouped Event Type for UI
+export interface GroupedEvent {
+  eventSlug: string;
+  eventTitle: string;
+  platform: Platform;
+  markets: UnifiedMarket[];
+  totalVolume: number;
+  earliestEnd: Date;
+  latestEnd: Date;
+  avgProbability: number;
 }
 
 // WebSocket Types

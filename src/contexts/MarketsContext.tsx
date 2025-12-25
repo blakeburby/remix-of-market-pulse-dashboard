@@ -10,6 +10,7 @@ import {
   PolymarketMarketsResponse,
   KalshiMarketsResponse,
   PolymarketPriceResponse,
+  GroupedEvent,
 } from '@/types/dome';
 import { useAuth } from '@/contexts/AuthContext';
 import { globalRateLimiter } from '@/lib/rate-limiter';
@@ -19,6 +20,7 @@ import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
 interface MarketsContextType {
   markets: UnifiedMarket[];
   filteredMarkets: UnifiedMarket[];
+  groupedEvents: GroupedEvent[];
   syncState: Record<Platform, SyncState>;
   summary: DashboardSummary;
   filters: MarketFilters;
@@ -190,6 +192,50 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     return result;
   }, [markets, filters]);
 
+  // Group filtered markets by event
+  const groupedEvents: GroupedEvent[] = React.useMemo(() => {
+    const eventMap = new Map<string, UnifiedMarket[]>();
+    
+    for (const market of filteredMarkets) {
+      const key = `${market.platform}_${market.eventSlug || market.id}`;
+      if (!eventMap.has(key)) {
+        eventMap.set(key, []);
+      }
+      eventMap.get(key)!.push(market);
+    }
+
+    const events: GroupedEvent[] = [];
+    for (const [key, eventMarkets] of eventMap) {
+      if (eventMarkets.length === 0) continue;
+      
+      const firstMarket = eventMarkets[0];
+      const totalVolume = eventMarkets.reduce((sum, m) => sum + (m.volume || 0), 0);
+      const endTimes = eventMarkets.map(m => m.endTime.getTime());
+      const avgProb = eventMarkets.reduce((sum, m) => sum + m.sideA.probability, 0) / eventMarkets.length;
+
+      events.push({
+        eventSlug: firstMarket.eventSlug || firstMarket.id,
+        eventTitle: firstMarket.eventTitle || firstMarket.title,
+        platform: firstMarket.platform,
+        markets: eventMarkets,
+        totalVolume,
+        earliestEnd: new Date(Math.min(...endTimes)),
+        latestEnd: new Date(Math.max(...endTimes)),
+        avgProbability: avgProb,
+      });
+    }
+
+    // Sort events by earliest end time
+    events.sort((a, b) => {
+      if (filters.sortOrder === 'desc') {
+        return b.earliestEnd.getTime() - a.earliestEnd.getTime();
+      }
+      return a.earliestEnd.getTime() - b.earliestEnd.getTime();
+    });
+
+    return events;
+  }, [filteredMarkets, filters.sortOrder]);
+
   // Calculate summary
   const summary: DashboardSummary = React.useMemo(() => {
     const polymarketCount = markets.filter(m => m.platform === 'POLYMARKET').length;
@@ -233,6 +279,24 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     setFiltersState(prev => ({ ...prev, ...newFilters }));
   }, []);
 
+  // Extract event slug from market slug (e.g., "will-btc-hit-100k" from "will-btc-hit-100k-by-2024")
+  const extractEventSlug = (marketSlug: string): string => {
+    // For Polymarket, the market_slug often contains the event identifier
+    // We'll use a simplified approach - group by first 3 words or the whole slug if short
+    const parts = marketSlug.split('-');
+    if (parts.length <= 4) return marketSlug;
+    // Take first 4 parts as the event slug
+    return parts.slice(0, 4).join('-');
+  };
+
+  // Generate a readable event title from slug
+  const slugToTitle = (slug: string): string => {
+    return slug
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  };
+
   // Convert Polymarket market to unified format
   const convertPolymarketMarket = (market: PolymarketMarket): UnifiedMarket => {
     const isYesNoMarket =
@@ -242,10 +306,14 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const sideATokenId = (market.side_a as any).token_id ?? (market.side_a as any).id;
     const sideBTokenId = (market.side_b as any).token_id ?? (market.side_b as any).id;
 
+    const eventSlug = extractEventSlug(market.market_slug);
+
     return {
       id: `poly_${market.condition_id}`,
       platform: 'POLYMARKET',
       title: market.title,
+      eventSlug,
+      eventTitle: slugToTitle(eventSlug),
       marketSlug: market.market_slug,
       conditionId: market.condition_id,
       startTime: new Date(market.start_time * 1000),
@@ -279,6 +347,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       id: `kalshi_${market.market_ticker}`,
       platform: 'KALSHI',
       title: market.title,
+      eventSlug: market.event_ticker, // Kalshi has explicit event_ticker
+      eventTitle: market.event_ticker.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
       kalshiMarketTicker: market.market_ticker,
       kalshiEventTicker: market.event_ticker,
       startTime: new Date(market.start_time * 1000),
@@ -726,6 +796,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     <MarketsContext.Provider value={{
       markets,
       filteredMarkets,
+      groupedEvents,
       syncState,
       summary,
       filters,

@@ -1,13 +1,36 @@
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useMarkets } from '@/contexts/MarketsContext';
-import { Search } from 'lucide-react';
+import { Search, List, Layers } from 'lucide-react';
 
-export function MarketFilters() {
+interface MarketFiltersProps {
+  viewMode: 'flat' | 'grouped';
+  onViewModeChange: (mode: 'flat' | 'grouped') => void;
+}
+
+export function MarketFilters({ viewMode, onViewModeChange }: MarketFiltersProps) {
   const { filters, setFilters } = useMarkets();
 
   return (
     <div className="flex flex-col sm:flex-row flex-wrap gap-2 sm:gap-3">
+      {/* View Toggle */}
+      <ToggleGroup 
+        type="single" 
+        value={viewMode} 
+        onValueChange={(v) => v && onViewModeChange(v as 'flat' | 'grouped')}
+        className="h-9 sm:h-10"
+      >
+        <ToggleGroupItem value="grouped" aria-label="Group by event" className="h-full px-2.5 sm:px-3 text-xs sm:text-sm">
+          <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1 sm:mr-1.5" />
+          <span className="hidden xs:inline">Events</span>
+        </ToggleGroupItem>
+        <ToggleGroupItem value="flat" aria-label="Flat list" className="h-full px-2.5 sm:px-3 text-xs sm:text-sm">
+          <List className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1 sm:mr-1.5" />
+          <span className="hidden xs:inline">Markets</span>
+        </ToggleGroupItem>
+      </ToggleGroup>
+
       {/* Search */}
       <div className="relative flex-1 min-w-0 sm:min-w-[200px]">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
