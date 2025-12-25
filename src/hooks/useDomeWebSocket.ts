@@ -24,6 +24,7 @@ export function useDomeWebSocket({
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const subscriptionIdsRef = useRef<Set<string>>(new Set());
   const reconnectAttemptsRef = useRef(0);
+  const prevMarketCountRef = useRef(0);
 
   const cleanup = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -179,7 +180,6 @@ export function useDomeWebSocket({
   }, [enabled, apiKey, marketSlugs.length > 0]);
 
   // Only reconnect when market count changes significantly (>20% change)
-  const prevMarketCountRef = useRef(0);
   useEffect(() => {
     const prevCount = prevMarketCountRef.current;
     const currCount = marketSlugs.length;
