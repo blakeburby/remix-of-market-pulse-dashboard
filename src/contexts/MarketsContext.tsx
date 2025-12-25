@@ -13,6 +13,7 @@ import {
 } from '@/types/dome';
 import { useAuth } from './AuthContext';
 import { globalRateLimiter } from '@/lib/rate-limiter';
+import { toast } from '@/hooks/use-toast';
 
 interface MarketsContextType {
   markets: UnifiedMarket[];
@@ -49,8 +50,11 @@ const defaultSyncState: SyncState = {
 
 const MarketsContext = createContext<MarketsContextType | null>(null);
 
+// Helper for exponential backoff
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export function MarketsProvider({ children }: { children: React.ReactNode }) {
-  const { getApiKey, isAuthenticated } = useAuth();
+  const { getApiKey, isAuthenticated, tier } = useAuth();
   const [markets, setMarkets] = useState<UnifiedMarket[]>([]);
   const [filters, setFiltersState] = useState<MarketFilters>(defaultFilters);
   const [syncState, setSyncState] = useState<Record<Platform, SyncState>>({
@@ -59,10 +63,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   });
   const [lastPriceUpdate, setLastPriceUpdate] = useState<Date | null>(null);
 
-  const discoveryIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const priceUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const discoveryIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const priceUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDiscoveringRef = useRef(false);
   const isPriceUpdatingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Computed values
   const [isDiscovering, setIsDiscovering] = useState(false);
@@ -214,183 +219,197 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     };
   };
 
-  // Fetch Polymarket markets with pagination
-  const fetchPolymarketMarkets = async () => {
-    const apiKey = getApiKey();
-    if (!apiKey) return;
-
-    let offset = 0;
-    const limit = 100;
-    const allMarkets: UnifiedMarket[] = [];
-
-    setSyncState(prev => ({
-      ...prev,
-      POLYMARKET: { ...prev.POLYMARKET, isRunning: true },
-    }));
-
-    try {
-      while (true) {
-        await globalRateLimiter.waitAndAcquire();
-
-        const response = await fetch(
-          `https://api.domeapi.io/v1/polymarket/markets?status=open&limit=${limit}&offset=${offset}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const data: PolymarketMarketsResponse = await response.json();
-        
-        for (const market of data.markets) {
-          allMarkets.push(convertPolymarketMarket(market));
-        }
-
-        if (!data.pagination.has_more) {
-          break;
-        }
-
-        offset += limit;
-      }
-
-      // Merge with existing markets (upsert)
-      setMarkets(prev => {
-        const existing = new Map(prev.filter(m => m.platform !== 'POLYMARKET').map(m => [m.id, m]));
-        for (const market of allMarkets) {
-          existing.set(market.id, market);
-        }
-        return Array.from(existing.values());
-      });
-
-      setSyncState(prev => ({
-        ...prev,
-        POLYMARKET: {
-          ...prev.POLYMARKET,
-          lastFullDiscoveryAt: new Date(),
-          lastOffsetUsed: offset,
-          lastError: null,
-          lastSuccessAt: new Date(),
-          isRunning: false,
-        },
-      }));
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      setSyncState(prev => ({
-        ...prev,
-        POLYMARKET: {
-          ...prev.POLYMARKET,
-          lastError: errorMsg,
-          isRunning: false,
-        },
-      }));
-    }
-  };
-
-  // Fetch Kalshi markets with pagination
-  const fetchKalshiMarkets = async () => {
-    const apiKey = getApiKey();
-    if (!apiKey) return;
-
-    let offset = 0;
-    const limit = 100;
-    const allMarkets: UnifiedMarket[] = [];
-
-    setSyncState(prev => ({
-      ...prev,
-      KALSHI: { ...prev.KALSHI, isRunning: true },
-    }));
-
-    try {
-      while (true) {
-        await globalRateLimiter.waitAndAcquire();
-
-        const response = await fetch(
-          `https://api.domeapi.io/v1/kalshi/markets?status=open&limit=${limit}&offset=${offset}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const data: KalshiMarketsResponse = await response.json();
-        
-        for (const market of data.markets) {
-          allMarkets.push(convertKalshiMarket(market));
-        }
-
-        if (!data.pagination.has_more) {
-          break;
-        }
-
-        offset += limit;
-      }
-
-      // Merge with existing markets (upsert)
-      setMarkets(prev => {
-        const existing = new Map(prev.filter(m => m.platform !== 'KALSHI').map(m => [m.id, m]));
-        for (const market of allMarkets) {
-          existing.set(market.id, market);
-        }
-        return Array.from(existing.values());
-      });
-
-      setSyncState(prev => ({
-        ...prev,
-        KALSHI: {
-          ...prev.KALSHI,
-          lastFullDiscoveryAt: new Date(),
-          lastOffsetUsed: offset,
-          lastError: null,
-          lastSuccessAt: new Date(),
-          isRunning: false,
-        },
-      }));
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      setSyncState(prev => ({
-        ...prev,
-        KALSHI: {
-          ...prev.KALSHI,
-          lastError: errorMsg,
-          isRunning: false,
-        },
-      }));
-    }
-  };
-
-  // Fetch price for a Polymarket token
-  const fetchTokenPrice = async (tokenId: string): Promise<number | null> => {
-    const apiKey = getApiKey();
-    if (!apiKey) return null;
-
-    try {
+  // Make a rate-limited API request with retry logic
+  const rateLimitedFetch = async (
+    url: string, 
+    apiKey: string,
+    signal?: AbortSignal,
+    retries = 3
+  ): Promise<Response> => {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      // Wait for rate limiter
       await globalRateLimiter.waitAndAcquire();
+      
+      if (signal?.aborted) {
+        throw new Error('Aborted');
+      }
 
-      const response = await fetch(
-        `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
-        {
+      try {
+        const response = await fetch(url, {
           headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
-        }
-      );
+          signal,
+        });
 
-      if (!response.ok) {
-        return null;
+        if (response.status === 429) {
+          // Rate limited - wait with exponential backoff
+          const waitTime = Math.pow(2, attempt + 1) * 2000 + Math.random() * 1000;
+          console.log(`Rate limited (429), waiting ${Math.round(waitTime)}ms before retry...`);
+          await sleep(waitTime);
+          continue;
+        }
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+
+        return response;
+      } catch (error) {
+        if (signal?.aborted) {
+          throw new Error('Aborted');
+        }
+        if (attempt === retries - 1) {
+          throw error;
+        }
+        // Wait before retry
+        await sleep(Math.pow(2, attempt) * 1000);
       }
+    }
+    throw new Error('Max retries exceeded');
+  };
+
+  // Fetch markets from a single platform with pagination
+  const fetchPlatformMarkets = async (
+    platform: Platform,
+    signal?: AbortSignal
+  ): Promise<UnifiedMarket[]> => {
+    const apiKey = getApiKey();
+    if (!apiKey) return [];
+
+    const allMarkets: UnifiedMarket[] = [];
+    let offset = 0;
+    const limit = 100;
+    // Limit total pages for Free tier to avoid long waits
+    const maxPages = tier === 'free' ? 5 : 50;
+    let pageCount = 0;
+
+    const baseUrl = platform === 'POLYMARKET' 
+      ? 'https://api.domeapi.io/v1/polymarket/markets'
+      : 'https://api.domeapi.io/v1/kalshi/markets';
+
+    setSyncState(prev => ({
+      ...prev,
+      [platform]: { ...prev[platform], isRunning: true, lastError: null },
+    }));
+
+    try {
+      while (pageCount < maxPages) {
+        if (signal?.aborted) break;
+
+        const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}`;
+        const response = await rateLimitedFetch(url, apiKey, signal);
+        
+        if (platform === 'POLYMARKET') {
+          const data: PolymarketMarketsResponse = await response.json();
+          for (const market of data.markets) {
+            allMarkets.push(convertPolymarketMarket(market));
+          }
+          if (!data.pagination.has_more) break;
+        } else {
+          const data: KalshiMarketsResponse = await response.json();
+          for (const market of data.markets) {
+            allMarkets.push(convertKalshiMarket(market));
+          }
+          if (!data.pagination.has_more) break;
+        }
+
+        offset += limit;
+        pageCount++;
+      }
+
+      setSyncState(prev => ({
+        ...prev,
+        [platform]: {
+          ...prev[platform],
+          lastFullDiscoveryAt: new Date(),
+          lastOffsetUsed: offset,
+          lastError: null,
+          lastSuccessAt: new Date(),
+          isRunning: false,
+        },
+      }));
+
+      return allMarkets;
+    } catch (error) {
+      if ((error as Error).message === 'Aborted') {
+        return allMarkets; // Return what we have
+      }
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setSyncState(prev => ({
+        ...prev,
+        [platform]: {
+          ...prev[platform],
+          lastError: errorMsg,
+          isRunning: false,
+        },
+      }));
+      return allMarkets; // Return partial results
+    }
+  };
+
+  // Run discovery for both platforms sequentially
+  const runDiscovery = useCallback(async () => {
+    if (!isDiscoveringRef.current) return;
+    
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    try {
+      // Fetch Polymarket first
+      const polymarketMarkets = await fetchPlatformMarkets('POLYMARKET', signal);
+      
+      if (signal.aborted) return;
+      
+      // Update markets with Polymarket data
+      setMarkets(prev => {
+        const existing = new Map(prev.filter(m => m.platform !== 'POLYMARKET').map(m => [m.id, m]));
+        for (const market of polymarketMarkets) {
+          existing.set(market.id, market);
+        }
+        return Array.from(existing.values());
+      });
+
+      if (signal.aborted) return;
+
+      // Then fetch Kalshi
+      const kalshiMarkets = await fetchPlatformMarkets('KALSHI', signal);
+      
+      if (signal.aborted) return;
+
+      // Update markets with Kalshi data
+      setMarkets(prev => {
+        const existing = new Map(prev.filter(m => m.platform !== 'KALSHI').map(m => [m.id, m]));
+        for (const market of kalshiMarkets) {
+          existing.set(market.id, market);
+        }
+        return Array.from(existing.values());
+      });
+
+      if (polymarketMarkets.length > 0 || kalshiMarkets.length > 0) {
+        toast({
+          title: "Markets discovered",
+          description: `Found ${polymarketMarkets.length} Polymarket and ${kalshiMarkets.length} Kalshi markets`,
+        });
+      }
+    } catch (error) {
+      console.error('Discovery error:', error);
+    }
+  }, [getApiKey, tier]);
+
+  // Fetch price for a Polymarket token
+  const fetchTokenPrice = async (tokenId: string, signal?: AbortSignal): Promise<number | null> => {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+
+    try {
+      const response = await rateLimitedFetch(
+        `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
+        apiKey,
+        signal,
+        2 // Fewer retries for price updates
+      );
 
       const data: PolymarketPriceResponse = await response.json();
       return data.price;
@@ -399,52 +418,56 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Update prices for all Polymarket tokens (round-robin)
-  const updatePrices = async () => {
-    const polymarketMarkets = markets.filter(m => m.platform === 'POLYMARKET');
-    if (polymarketMarkets.length === 0) return;
+  // Update prices for Polymarket tokens one at a time
+  const runPriceUpdate = useCallback(async () => {
+    if (!isPriceUpdatingRef.current) return;
 
-    // Sort by oldest update first (prioritize stale data)
+    const polymarketMarkets = markets.filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId);
+    if (polymarketMarkets.length === 0) {
+      // Schedule next check
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 5000);
+      return;
+    }
+
+    // Pick the oldest updated market
     const sortedMarkets = [...polymarketMarkets].sort(
       (a, b) => a.lastUpdated.getTime() - b.lastUpdated.getTime()
     );
+    const market = sortedMarkets[0];
 
-    // Update a batch of markets
-    const batchSize = Math.min(10, sortedMarkets.length);
-    const batch = sortedMarkets.slice(0, batchSize);
-
-    for (const market of batch) {
-      if (!isPriceUpdatingRef.current) break;
-
-      if (market.sideA.tokenId) {
-        const priceA = await fetchTokenPrice(market.sideA.tokenId);
-        if (priceA !== null) {
-          setMarkets(prev => prev.map(m => {
-            if (m.id === market.id) {
-              return {
-                ...m,
-                sideA: {
-                  ...m.sideA,
-                  price: priceA,
-                  probability: priceA,
-                  odds: priceA > 0 ? 1 / priceA : null,
-                },
-                sideB: {
-                  ...m.sideB,
-                  price: 1 - priceA,
-                  probability: 1 - priceA,
-                  odds: (1 - priceA) > 0 ? 1 / (1 - priceA) : null,
-                },
-                lastUpdated: new Date(),
-              };
-            }
-            return m;
-          }));
-          setLastPriceUpdate(new Date());
-        }
+    if (market.sideA.tokenId) {
+      const priceA = await fetchTokenPrice(market.sideA.tokenId);
+      if (priceA !== null && isPriceUpdatingRef.current) {
+        setMarkets(prev => prev.map(m => {
+          if (m.id === market.id) {
+            return {
+              ...m,
+              sideA: {
+                ...m.sideA,
+                price: priceA,
+                probability: priceA,
+                odds: priceA > 0 ? 1 / priceA : null,
+              },
+              sideB: {
+                ...m.sideB,
+                price: 1 - priceA,
+                probability: 1 - priceA,
+                odds: (1 - priceA) > 0 ? 1 / (1 - priceA) : null,
+              },
+              lastUpdated: new Date(),
+            };
+          }
+          return m;
+        }));
+        setLastPriceUpdate(new Date());
       }
     }
-  };
+
+    // Schedule next price update
+    if (isPriceUpdatingRef.current) {
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 100);
+    }
+  }, [markets, getApiKey]);
 
   const startDiscovery = useCallback(() => {
     if (isDiscoveringRef.current) return;
@@ -452,19 +475,26 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     setIsDiscovering(true);
 
     // Initial discovery
-    const runDiscovery = async () => {
-      await Promise.all([fetchPolymarketMarkets(), fetchKalshiMarkets()]);
-    };
-
     runDiscovery();
 
-    // Set up interval for continuous discovery (every 60 seconds)
-    discoveryIntervalRef.current = setInterval(runDiscovery, 60000);
-  }, []);
+    // Schedule periodic rediscovery (longer interval for Free tier)
+    const intervalMs = tier === 'free' ? 120000 : 60000;
+    discoveryIntervalRef.current = setInterval(() => {
+      if (isDiscoveringRef.current) {
+        runDiscovery();
+      }
+    }, intervalMs);
+  }, [runDiscovery, tier]);
 
   const stopDiscovery = useCallback(() => {
     isDiscoveringRef.current = false;
     setIsDiscovering(false);
+    
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
     if (discoveryIntervalRef.current) {
       clearInterval(discoveryIntervalRef.current);
       discoveryIntervalRef.current = null;
@@ -475,18 +505,18 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     if (isPriceUpdatingRef.current) return;
     isPriceUpdatingRef.current = true;
     setIsPriceUpdating(true);
-
-    // Set up interval for continuous price updates (every 5 seconds)
-    priceUpdateIntervalRef.current = setInterval(updatePrices, 5000);
-    updatePrices(); // Initial update
-  }, [markets]);
+    
+    // Start price update loop
+    runPriceUpdate();
+  }, [runPriceUpdate]);
 
   const stopPriceUpdates = useCallback(() => {
     isPriceUpdatingRef.current = false;
     setIsPriceUpdating(false);
-    if (priceUpdateIntervalRef.current) {
-      clearInterval(priceUpdateIntervalRef.current);
-      priceUpdateIntervalRef.current = null;
+    
+    if (priceUpdateTimeoutRef.current) {
+      clearTimeout(priceUpdateTimeoutRef.current);
+      priceUpdateTimeoutRef.current = null;
     }
   }, []);
 
@@ -494,18 +524,27 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isAuthenticated) {
       startDiscovery();
-      startPriceUpdates();
+      // Delay price updates to let discovery finish first
+      const timeout = setTimeout(() => {
+        if (isAuthenticated) {
+          startPriceUpdates();
+        }
+      }, 5000);
+      return () => clearTimeout(timeout);
     } else {
       stopDiscovery();
       stopPriceUpdates();
       setMarkets([]);
     }
+  }, [isAuthenticated]);
 
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
       stopDiscovery();
       stopPriceUpdates();
     };
-  }, [isAuthenticated]);
+  }, []);
 
   return (
     <MarketsContext.Provider value={{
