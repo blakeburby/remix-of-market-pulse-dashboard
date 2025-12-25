@@ -374,7 +374,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Make a rate-limited API request with retry logic
   const rateLimitedFetch = async (
-    url: string, 
+    url: string,
     apiKey: string,
     signal?: AbortSignal,
     retries = 5
@@ -382,7 +382,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     for (let attempt = 0; attempt < retries; attempt++) {
       // Wait for rate limiter
       await globalRateLimiter.waitAndAcquire();
-      
+
       if (signal?.aborted) {
         throw new Error('Aborted');
       }
@@ -423,6 +423,66 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       }
     }
     throw new Error('Max retries exceeded');
+  };
+
+  const warmPolymarketPrices = async (
+    discoveredMarkets: UnifiedMarket[],
+    apiKey: string,
+    signal?: AbortSignal
+  ) => {
+    // Only warm a limited set (what the user is most likely to be viewing)
+    const warmCount = tier === 'free' ? 50 : 300;
+    const targets = discoveredMarkets
+      .filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId)
+      .slice(0, warmCount);
+
+    const pending = new Map<string, number>();
+
+    const flush = () => {
+      if (pending.size === 0) return;
+      const snapshot = new Map(pending);
+      pending.clear();
+
+      setMarkets(prev => prev.map(m => {
+        const priceA = snapshot.get(m.id);
+        if (priceA === undefined) return m;
+        const priceB = 1 - priceA;
+        return {
+          ...m,
+          sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
+          sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
+          lastUpdated: new Date(),
+        };
+      }));
+      setLastPriceUpdate(new Date());
+    };
+
+    for (let i = 0; i < targets.length; i++) {
+      if (signal?.aborted) break;
+
+      const market = targets[i];
+      const tokenId = market.sideA.tokenId!;
+
+      try {
+        const resp = await rateLimitedFetch(
+          `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
+          apiKey,
+          signal,
+          3
+        );
+        const data: PolymarketPriceResponse = await resp.json();
+        if (typeof data.price === 'number') {
+          pending.set(market.id, data.price);
+        }
+      } catch {
+        // ignore warmup errors; polling/websocket will keep updating
+      }
+
+      // Batch UI updates to avoid re-rendering for every single price
+      if ((i + 1) % 20 === 0) flush();
+    }
+
+    flush();
   };
 
   // Fetch markets from a single platform with pagination
@@ -507,16 +567,19 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   // Run discovery for both platforms sequentially
   const runDiscovery = useCallback(async () => {
     if (!isDiscoveringRef.current) return;
-    
+
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
     try {
+      const apiKey = getApiKey();
+      if (!apiKey) return;
+
       // Fetch Polymarket first
       const polymarketMarkets = await fetchPlatformMarkets('POLYMARKET', signal);
-      
+
       if (signal.aborted) return;
-      
+
       // Update markets with Polymarket data
       setMarkets(prev => {
         const existing = new Map(prev.filter(m => m.platform !== 'POLYMARKET').map(m => [m.id, m]));
@@ -525,6 +588,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         }
         return Array.from(existing.values());
       });
+
+      // Immediately warm up prices for the first page-worth of Polymarket markets so we don't show 50/50.
+      // Run in the background (don't block discovery).
+      void warmPolymarketPrices(polymarketMarkets, apiKey, signal);
 
       if (signal.aborted) return;
 
@@ -551,7 +618,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error('Discovery error:', error);
     }
-  }, [getApiKey, tier]);
+  }, [getApiKey, fetchPlatformMarkets, warmPolymarketPrices, tier]);
 
   // Track failed token IDs to avoid retrying them
   const failedTokenIds = useRef<Set<string>>(new Set());
