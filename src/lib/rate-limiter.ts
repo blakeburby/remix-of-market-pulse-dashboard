@@ -98,28 +98,32 @@ export class RateLimiter {
     }
   }
 
-  // Acquire multiple tokens at once for true parallel requests
+  // Acquire multiple tokens at once for parallel requests
+  // Waits for tokens to accumulate at QPS rate to avoid 429s
   async acquireMultiple(count: number): Promise<void> {
     const limit = TIER_LIMITS[this.tier];
+    const now = Date.now();
     
-    while (true) {
-      this.refill();
-      
-      if (this.tokens >= count) {
-        this.tokens -= count;
-        const now = Date.now();
-        this.lastRequestTime = now;
-        // Log all requests as happening now
-        for (let i = 0; i < count; i++) {
-          this.requestsInLastMinute.push(now);
-        }
-        return;
-      }
-      
-      // Wait for enough tokens to accumulate
+    // Always wait for tokens to accumulate based on time since last batch
+    // This prevents burning through the bucket too fast
+    this.refill();
+    
+    // If we don't have enough tokens, wait for them to refill
+    if (this.tokens < count) {
       const tokensNeeded = count - this.tokens;
-      const waitTime = Math.ceil((tokensNeeded / limit.qps) * 1000) + 50;
+      // Wait exactly as long as needed for tokens to refill at QPS rate
+      const waitTime = Math.ceil((tokensNeeded / limit.qps) * 1000);
       await new Promise(resolve => setTimeout(resolve, waitTime));
+      this.refill();
+    }
+    
+    // Now consume the tokens
+    this.tokens -= count;
+    this.lastRequestTime = Date.now();
+    
+    // Log all requests
+    for (let i = 0; i < count; i++) {
+      this.requestsInLastMinute.push(this.lastRequestTime);
     }
   }
 
