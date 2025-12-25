@@ -162,6 +162,7 @@ export interface DashboardSummary {
   lastPriceUpdateTime: Date | null;
   connectionMode: 'websocket' | 'polling' | 'disconnected';
   requestsPerMinute: number;
+  marketsWithPrices: number;
 }
 
 // Filter Options
