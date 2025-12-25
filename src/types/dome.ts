@@ -13,7 +13,10 @@ export const TIER_LIMITS: Record<DomeTier, { qps: number; qp10s: number; subscri
 
 // Polymarket Market Types
 export interface PolymarketSide {
-  token_id: string;
+  // Dome response uses `id` for the token id in markets payload
+  id?: string;
+  // Some docs/versions use `token_id`
+  token_id?: string;
   label: string;
 }
 

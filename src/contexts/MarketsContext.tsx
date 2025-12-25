@@ -229,10 +229,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Convert Polymarket market to unified format
   const convertPolymarketMarket = (market: PolymarketMarket): UnifiedMarket => {
-    const isYesNoMarket = 
+    const isYesNoMarket =
       market.side_a.label.toLowerCase().includes('yes') ||
       market.side_b.label.toLowerCase().includes('no');
-    
+
+    const sideATokenId = (market.side_a as any).token_id ?? (market.side_a as any).id;
+    const sideBTokenId = (market.side_b as any).token_id ?? (market.side_b as any).id;
+
     return {
       id: `poly_${market.condition_id}`,
       platform: 'POLYMARKET',
@@ -243,20 +246,21 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       endTime: new Date(market.end_time * 1000),
       status: market.status,
       sideA: {
-        tokenId: market.side_a.token_id,
+        tokenId: sideATokenId,
         label: isYesNoMarket ? 'Yes' : market.side_a.label,
         price: 0.5,
         probability: 0.5,
         odds: 2,
       },
       sideB: {
-        tokenId: market.side_b.token_id,
+        tokenId: sideBTokenId,
         label: isYesNoMarket ? 'No' : market.side_b.label,
         price: 0.5,
         probability: 0.5,
         odds: 2,
       },
-      lastUpdated: new Date(),
+      // Force initial tokens to be considered stale so polling updates immediately
+      lastUpdated: new Date(0),
     };
   };
 
@@ -506,7 +510,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
 
     const currentMarkets = marketsRef.current;
-    const polymarketMarkets = currentMarkets.filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId);
+    const polymarketMarkets = currentMarkets.filter(m => m.platform === 'POLYMARKET' && (m.sideA.tokenId || m.sideB.tokenId));
     
     if (polymarketMarkets.length === 0) {
       // No markets yet, check again soon
