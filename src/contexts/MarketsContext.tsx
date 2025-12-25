@@ -484,15 +484,23 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Track failed token IDs to avoid retrying them
   const failedTokenIds = useRef<Set<string>>(new Set());
-  const rateLimitedUntil = useRef<number>(0);
-  const lastRequestTime = useRef<number>(0);
 
-  // Fetch price for a Polymarket token
+  // Price update uses the same shared rate limit refs from discovery
+  // But we need local refs since they're defined after the discovery functions
+  const priceRateLimitedUntil = useRef<number>(0);
+  const priceLastRequestTime = useRef<number>(0);
+
+  // Fetch price for a Polymarket token with rate limiting
   const fetchTokenPriceDirect = async (
     tokenId: string, 
     apiKey: string
   ): Promise<{ tokenId: string; price: number | null; rateLimited?: boolean }> => {
     if (failedTokenIds.current.has(tokenId)) {
+      return { tokenId, price: null };
+    }
+
+    // Check discovery is not running - give it priority
+    if (syncState.POLYMARKET.isRunning || syncState.KALSHI.isRunning) {
       return { tokenId, price: null };
     }
 
@@ -515,7 +523,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       if (response.status === 429) {
         const data = await response.json().catch(() => ({}));
         const retryAfter = data.retry_after || 5;
-        rateLimitedUntil.current = Date.now() + retryAfter * 1000;
+        priceRateLimitedUntil.current = Date.now() + retryAfter * 1000;
         console.log(`[Price] Rate limited, backing off for ${retryAfter}s`);
         return { tokenId, price: null, rateLimited: true };
       }
@@ -547,16 +555,22 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
     // Check if we're rate limited
     const now = Date.now();
-    if (now < rateLimitedUntil.current) {
-      const waitTime = rateLimitedUntil.current - now + 100;
+    if (now < priceRateLimitedUntil.current) {
+      const waitTime = priceRateLimitedUntil.current - now + 100;
       priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, waitTime);
+      return;
+    }
+
+    // Skip if discovery is running (give it priority)
+    if (syncState.POLYMARKET.isRunning || syncState.KALSHI.isRunning) {
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 2000);
       return;
     }
 
     // Enforce minimum delay between requests based on tier QPS
     // Free: 1/sec, Dev: 10/sec, Enterprise: 100/sec (being conservative)
     const minDelayMs = tier === 'free' ? 1050 : tier === 'dev' ? 110 : 15;
-    const timeSinceLastRequest = now - lastRequestTime.current;
+    const timeSinceLastRequest = now - priceLastRequestTime.current;
     if (timeSinceLastRequest < minDelayMs) {
       priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, minDelayMs - timeSinceLastRequest);
       return;
@@ -585,7 +599,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     
     // Get the next market to update
     const market = sortedMarkets[0];
-    lastRequestTime.current = Date.now();
+    priceLastRequestTime.current = Date.now();
 
     const result = await fetchTokenPriceDirect(market.sideA.tokenId!, apiKey);
 
@@ -656,17 +670,19 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const startPriceUpdates = useCallback(() => {
-    // Enable WebSocket first
-    setWsEnabled(true);
+    // Only enable WebSocket for paid tiers (free tier has connection limits)
+    if (tier !== 'free') {
+      setWsEnabled(true);
+    }
     
-    // Also start polling as fallback (will run alongside WS)
+    // Start polling for prices
     if (isPriceUpdatingRef.current) return;
     isPriceUpdatingRef.current = true;
     setIsPriceUpdating(true);
     
-    // Start price update loop (polling fallback)
+    // Start price update loop
     runPriceUpdate();
-  }, [runPriceUpdate]);
+  }, [runPriceUpdate, tier]);
 
   const stopPriceUpdates = useCallback(() => {
     setWsEnabled(false);

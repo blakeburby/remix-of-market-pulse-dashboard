@@ -125,6 +125,14 @@ export function useDomeWebSocket({
             );
           } else if (data.type === 'error') {
             console.error('[WS] Error from server:', data);
+            // If max connections exceeded, don't try to reconnect
+            if (data.code === 'MAX_CONNECTIONS_EXCEEDED') {
+              console.log('[WS] Max connections exceeded, disabling WebSocket');
+              setStatus('error');
+              // Prevent auto-reconnect by clearing enabled state locally
+              wsRef.current?.close(1000, 'MAX_CONNECTIONS_EXCEEDED');
+              return;
+            }
           }
         } catch (error) {
           console.error('[WS] Failed to parse message:', error);
