@@ -610,9 +610,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Using a ref to access current markets to avoid stale closure
+  // Using refs to access current derived values to avoid stale closures
   const marketsRef = useRef(markets);
   marketsRef.current = markets;
+
+  const filteredMarketsRef = useRef(filteredMarkets);
+  filteredMarketsRef.current = filteredMarkets;
 
   // Sequential price update with proper rate limiting
   const runPriceUpdate = useCallback(async () => {
@@ -647,27 +650,36 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const currentMarkets = marketsRef.current;
-    const polymarketMarkets = currentMarkets.filter(m => 
-      m.platform === 'POLYMARKET' && 
-      m.sideA.tokenId && 
+    // IMPORTANT: update *visible/filtered* markets first so the UI actually looks "live".
+    // Fall back to all markets if the filter is excluding everything.
+    const candidateMarkets = filteredMarketsRef.current.length > 0
+      ? filteredMarketsRef.current
+      : marketsRef.current;
+
+    const polymarketMarkets = candidateMarkets.filter(m =>
+      m.platform === 'POLYMARKET' &&
+      m.sideA.tokenId &&
       !failedTokenIds.current.has(m.sideA.tokenId)
     );
-    
+
     if (polymarketMarkets.length === 0) {
       priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 1000);
       return;
     }
 
+    // On the free tier, limit how many markets we rotate through to keep updates perceptibly fast.
+    const maxTracked = tier === 'free' ? 50 : tier === 'dev' ? 500 : 5000;
+    const limitedMarkets = polymarketMarkets.slice(0, Math.min(maxTracked, polymarketMarkets.length));
+
     // Prioritize markets without prices yet, then oldest updated
-    const sortedMarkets = [...polymarketMarkets].sort((a, b) => {
+    const sortedMarkets = [...limitedMarkets].sort((a, b) => {
       const aHasPrice = Math.abs(a.sideA.probability - 0.5) > 0.001;
       const bHasPrice = Math.abs(b.sideA.probability - 0.5) > 0.001;
       if (!aHasPrice && bHasPrice) return -1;
       if (aHasPrice && !bHasPrice) return 1;
       return a.lastUpdated.getTime() - b.lastUpdated.getTime();
     });
-    
+
     // Get the next market to update
     const market = sortedMarkets[0];
     priceLastRequestTime.current = Date.now();
