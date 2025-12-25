@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,12 +8,29 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { useMarkets } from '@/contexts/MarketsContext';
 import { GroupedEvent, UnifiedMarket } from '@/types/dome';
 import { formatDistanceToNow } from 'date-fns';
-import { ChevronUp, ChevronDown, ChevronRight, ExternalLink, Loader2, Layers } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, ExternalLink, Loader2, Layers } from 'lucide-react';
+
+const EVENTS_PER_PAGE = 100;
 
 export function EventsView() {
   const { groupedEvents, isDiscovering, isPriceUpdating } = useMarkets();
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [selectedMarket, setSelectedMarket] = useState<UnifiedMarket | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(groupedEvents.length / EVENTS_PER_PAGE));
+  const paginatedEvents = useMemo(() => {
+    const start = (currentPage - 1) * EVENTS_PER_PAGE;
+    return groupedEvents.slice(start, start + EVENTS_PER_PAGE);
+  }, [groupedEvents, currentPage]);
+
+  // Reset to page 1 when events change significantly
+  useMemo(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(1);
+    }
+  }, [totalPages, currentPage]);
 
   const formatProbability = (prob: number) => `${(prob * 100).toFixed(0)}%`;
   const formatOdds = (odds: number | null) => odds ? odds.toFixed(2) : '—';
@@ -79,9 +96,9 @@ export function EventsView() {
   return (
     <>
       <Card className="border-border shadow-sm overflow-hidden">
-        <ScrollArea className="h-[calc(100vh-380px)] min-h-[300px] sm:h-[600px]">
+        <ScrollArea className="h-[calc(100vh-420px)] min-h-[300px] sm:h-[550px]">
           <div className="divide-y divide-border">
-            {groupedEvents.map((event) => (
+            {paginatedEvents.map((event) => (
               <EventCard
                 key={`${event.platform}_${event.eventSlug}`}
                 event={event}
@@ -96,17 +113,46 @@ export function EventsView() {
           </div>
         </ScrollArea>
 
-        {/* Footer */}
+        {/* Footer with Pagination */}
         <div className="px-3 sm:px-6 py-2.5 sm:py-4 bg-muted/30 border-t border-border flex items-center justify-between">
           <p className="text-xs sm:text-sm text-muted-foreground font-medium">
             {groupedEvents.length} events • {groupedEvents.reduce((sum, e) => sum + e.markets.length, 0)} markets
           </p>
-          {isPriceUpdating && (
-            <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-primary font-medium">
-              <Loader2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 animate-spin" />
-              <span>Live</span>
-            </div>
-          )}
+          
+          <div className="flex items-center gap-2">
+            {isPriceUpdating && (
+              <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-primary font-medium mr-2">
+                <Loader2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 animate-spin" />
+                <span>Live</span>
+              </div>
+            )}
+            
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs text-muted-foreground px-2 min-w-[60px] text-center">
+                  {currentPage} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </Card>
 
