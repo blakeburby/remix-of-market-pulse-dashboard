@@ -49,46 +49,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const validateApiKey = async (apiKey: string): Promise<boolean> => {
-    try {
-      // Test the API key by making a simple request
-      const response = await fetch(
-        'https://api.domeapi.io/v1/polymarket/markets?status=open&limit=1',
-        {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
+  const validateApiKey = async (apiKey: string, retries = 3): Promise<boolean> => {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        // Test the API key by making a simple request
+        const response = await fetch(
+          'https://api.domeapi.io/v1/polymarket/markets?status=open&limit=1',
+          {
+            headers: {
+              'Authorization': `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        if (response.status === 401) {
+          throw new Error('Invalid API key. Please check your key and try again.');
         }
-      );
 
-      if (response.status === 401) {
-        throw new Error('Invalid API key. Please check your key and try again.');
-      }
+        if (response.status === 429) {
+          // Parse retry_after from response
+          const data = await response.json().catch(() => ({}));
+          const retryAfter = data.retry_after || Math.pow(2, attempt + 1);
+          
+          if (attempt < retries - 1) {
+            // Wait and retry
+            console.log(`[Login] Rate limited, waiting ${retryAfter}s before retry ${attempt + 2}/${retries}`);
+            await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+            continue;
+          }
+          throw new Error(`Rate limited. Please wait ${retryAfter} seconds and try again.`);
+        }
 
-      if (response.status === 429) {
-        throw new Error('Rate limited. Please wait a moment and try again.');
-      }
+        if (response.status === 403) {
+          throw new Error('Access forbidden. Your API key may not have the required permissions.');
+        }
 
-      if (response.status === 403) {
-        throw new Error('Access forbidden. Your API key may not have the required permissions.');
-      }
+        if (!response.ok) {
+          throw new Error(`API error (${response.status}). Please try again.`);
+        }
 
-      if (!response.ok) {
-        throw new Error(`API error (${response.status}). Please try again.`);
+        return true;
+      } catch (error) {
+        if (error instanceof TypeError && error.message === 'Failed to fetch') {
+          throw new Error('Unable to connect to Dome API. Please check your internet connection or try again later.');
+        }
+        if (error instanceof Error) {
+          throw error;
+        }
+        throw new Error('Failed to validate API key. Please try again.');
       }
-
-      return true;
-    } catch (error) {
-      if (error instanceof TypeError && error.message === 'Failed to fetch') {
-        // Network error - could be CORS, offline, or API down
-        throw new Error('Unable to connect to Dome API. Please check your internet connection or try again later.');
-      }
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error('Failed to validate API key. Please try again.');
     }
+    return false;
   };
 
   const login = useCallback(async (apiKey: string): Promise<boolean> => {
