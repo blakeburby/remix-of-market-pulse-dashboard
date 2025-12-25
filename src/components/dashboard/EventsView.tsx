@@ -116,7 +116,7 @@ export function EventsView() {
         {/* Footer with Pagination */}
         <div className="px-3 sm:px-6 py-2.5 sm:py-4 bg-muted/30 border-t border-border flex items-center justify-between">
           <p className="text-xs sm:text-sm text-muted-foreground font-medium">
-            {groupedEvents.length} events • {groupedEvents.reduce((sum, e) => sum + e.markets.length, 0)} markets
+            {groupedEvents.length} events • {groupedEvents.reduce((sum: number, e) => sum + e.markets.length, 0)} markets
           </p>
           
           <div className="flex items-center gap-2">

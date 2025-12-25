@@ -964,10 +964,47 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useMarkets() {
+export function useMarkets(): MarketsContextType {
   const context = useContext(MarketsContext);
-  if (!context) {
-    throw new Error('useMarkets must be used within a MarketsProvider');
-  }
-  return context;
+  if (context) return context;
+
+  // Defensive fallback to avoid a blank screen if provider wiring breaks
+  console.error('useMarkets called outside MarketsProvider');
+
+  const fallbackSyncState: Record<Platform, SyncState> = {
+    POLYMARKET: { ...defaultSyncState, platform: 'POLYMARKET' },
+    KALSHI: { ...defaultSyncState, platform: 'KALSHI' },
+  };
+
+  const fallbackSummary: DashboardSummary = {
+    totalMarkets: 0,
+    polymarketCount: 0,
+    kalshiCount: 0,
+    totalTokensTracked: 0,
+    lastDiscoveryTime: null,
+    lastPriceUpdateTime: null,
+    connectionMode: 'disconnected',
+    requestsPerMinute: 0,
+    marketsWithPrices: 0,
+    discoveryProgress: null,
+    liveRpm: 0,
+  };
+
+  return {
+    markets: [],
+    filteredMarkets: [],
+    groupedEvents: [],
+    syncState: fallbackSyncState,
+    summary: fallbackSummary,
+    filters: defaultFilters,
+    isDiscovering: false,
+    isPriceUpdating: false,
+    wsStatus: 'disconnected',
+    wsSubscriptionCount: 0,
+    setFilters: () => undefined,
+    startDiscovery: () => undefined,
+    stopDiscovery: () => undefined,
+    startPriceUpdates: () => undefined,
+    stopPriceUpdates: () => undefined,
+  };
 }
