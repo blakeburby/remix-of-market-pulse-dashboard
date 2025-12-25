@@ -442,8 +442,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     if (targets.length === 0) return;
 
     const pending = new Map<string, number>();
-    // Parallel batch size: use more concurrency for paid tiers
-    const BATCH_SIZE = tier === 'free' ? 5 : 20;
+    // Larger batch size for true parallel fetching - use more of the rate limit capacity
+    const BATCH_SIZE = tier === 'free' ? 5 : 50;
 
     const flush = () => {
       if (pending.size === 0) return;
@@ -470,11 +470,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
       const batch = targets.slice(i, i + BATCH_SIZE);
       
-      // Fire all requests in batch simultaneously
+      // Acquire all tokens for this batch upfront - enables true parallel requests
+      await globalRateLimiter.acquireMultiple(batch.length);
+      
+      // Fire ALL requests truly in parallel (no per-request rate limiting)
       const results = await Promise.allSettled(
         batch.map(async (market) => {
           const tokenId = market.sideA.tokenId!;
-          await globalRateLimiter.waitAndAcquire();
           
           const resp = await fetch(
             `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
