@@ -6,8 +6,11 @@ export class RateLimiter {
   private tokens: number;
   private lastRefill: number;
   private tier: DomeTier;
-  private requestsInLastMinute: number[] = [];
   private lastRequestTime: number = 0;
+  
+  // Use counter-based tracking instead of array for efficiency
+  private requestCount: number = 0;
+  private windowStart: number = Date.now();
 
   constructor(tier: DomeTier = 'free') {
     this.tier = tier;
@@ -34,9 +37,11 @@ export class RateLimiter {
     this.tokens = Math.min(this.tokens + tokensToAdd, limit.qp10s);
     this.lastRefill = now;
     
-    // Clean up old request timestamps
-    const oneMinuteAgo = now - 60000;
-    this.requestsInLastMinute = this.requestsInLastMinute.filter(t => t > oneMinuteAgo);
+    // Reset request counter if window expired
+    if (now - this.windowStart > 60000) {
+      this.requestCount = 0;
+      this.windowStart = now;
+    }
   }
 
   private getMinDelayMs(): number {
@@ -60,7 +65,7 @@ export class RateLimiter {
     if (this.tokens >= 1) {
       this.tokens -= 1;
       this.lastRequestTime = now;
-      this.requestsInLastMinute.push(now);
+      this.requestCount += 1;
       return true;
     }
     
@@ -79,7 +84,7 @@ export class RateLimiter {
       
       // If we need to wait for QPS limit, calculate exact wait time
       if (timeSinceLastRequest < minDelay) {
-        const waitTime = minDelay - timeSinceLastRequest + 50; // Add 50ms buffer
+        const waitTime = minDelay - timeSinceLastRequest + 10; // Reduced buffer from 50ms to 10ms
         await new Promise(resolve => setTimeout(resolve, waitTime));
         continue;
       }
@@ -88,12 +93,12 @@ export class RateLimiter {
       if (this.tokens >= 1) {
         this.tokens -= 1;
         this.lastRequestTime = Date.now();
-        this.requestsInLastMinute.push(this.lastRequestTime);
+        this.requestCount += 1;
         return;
       }
       
-      // Wait for token refill
-      const waitForToken = Math.ceil(1000 / limit.qps) + 50;
+      // Wait for token refill - more precise timing
+      const waitForToken = Math.ceil(1000 / limit.qps);
       await new Promise(resolve => setTimeout(resolve, waitForToken));
     }
   }
@@ -107,25 +112,21 @@ export class RateLimiter {
       
       if (this.tokens >= count) {
         this.tokens -= count;
-        const now = Date.now();
-        this.lastRequestTime = now;
-        // Log all requests as happening now
-        for (let i = 0; i < count; i++) {
-          this.requestsInLastMinute.push(now);
-        }
+        this.lastRequestTime = Date.now();
+        this.requestCount += count;
         return;
       }
       
-      // Wait for enough tokens to accumulate
+      // More precise wait: only wait for exactly what we need
       const tokensNeeded = count - this.tokens;
-      const waitTime = Math.ceil((tokensNeeded / limit.qps) * 1000) + 50;
+      const waitTime = Math.ceil((tokensNeeded / limit.qps) * 1000);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
 
   getRequestsPerMinute(): number {
-    this.refill(); // This also cleans up old timestamps
-    return this.requestsInLastMinute.length;
+    this.refill(); // This also resets window if needed
+    return this.requestCount;
   }
 
   getAvailableTokens(): number {
