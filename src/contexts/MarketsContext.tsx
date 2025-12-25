@@ -11,7 +11,7 @@ import {
   KalshiMarketsResponse,
   PolymarketPriceResponse,
 } from '@/types/dome';
-import { useAuth } from './AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { globalRateLimiter } from '@/lib/rate-limiter';
 import { toast } from '@/hooks/use-toast';
 import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
