@@ -439,7 +439,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       .filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId)
       .slice(0, warmCount);
 
+    if (targets.length === 0) return;
+
     const pending = new Map<string, number>();
+    // Parallel batch size: use more concurrency for paid tiers
+    const BATCH_SIZE = tier === 'free' ? 5 : 20;
 
     const flush = () => {
       if (pending.size === 0) return;
@@ -460,32 +464,45 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       setLastPriceUpdate(new Date());
     };
 
-    for (let i = 0; i < targets.length; i++) {
+    // Process in parallel batches for much faster loading
+    for (let i = 0; i < targets.length; i += BATCH_SIZE) {
       if (signal?.aborted) break;
 
-      const market = targets[i];
-      const tokenId = market.sideA.tokenId!;
+      const batch = targets.slice(i, i + BATCH_SIZE);
+      
+      // Fire all requests in batch simultaneously
+      const results = await Promise.allSettled(
+        batch.map(async (market) => {
+          const tokenId = market.sideA.tokenId!;
+          await globalRateLimiter.waitAndAcquire();
+          
+          const resp = await fetch(
+            `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
+            {
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              signal,
+            }
+          );
+          
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data: PolymarketPriceResponse = await resp.json();
+          return { marketId: market.id, price: data.price };
+        })
+      );
 
-      try {
-        const resp = await rateLimitedFetch(
-          `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
-          apiKey,
-          signal,
-          3
-        );
-        const data: PolymarketPriceResponse = await resp.json();
-        if (typeof data.price === 'number') {
-          pending.set(market.id, data.price);
+      // Collect successful results
+      for (const result of results) {
+        if (result.status === 'fulfilled' && typeof result.value.price === 'number') {
+          pending.set(result.value.marketId, result.value.price);
         }
-      } catch {
-        // ignore warmup errors; polling/websocket will keep updating
       }
 
-      // Batch UI updates to avoid re-rendering for every single price
-      if ((i + 1) % 20 === 0) flush();
+      // Flush after each batch for responsive UI updates
+      flush();
     }
-
-    flush();
   };
 
   // Fetch markets from a single platform with pagination
