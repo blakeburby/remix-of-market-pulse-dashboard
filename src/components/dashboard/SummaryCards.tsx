@@ -2,7 +2,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { DashboardSummary, Platform, SyncState } from '@/types/dome';
 import { 
   BarChart3, 
-  Coins, 
+  CircleDot, 
   Clock, 
   Activity, 
   Zap,
@@ -31,87 +31,87 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
       {/* Total Markets */}
-      <Card className="border-border">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/10">
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-center gap-4">
+            <div className="p-2.5 rounded-lg bg-primary/10">
               <BarChart3 className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{summary.totalMarkets}</p>
-              <p className="text-xs text-muted-foreground">Total Markets</p>
+              <p className="text-2xl font-semibold text-foreground">{summary.totalMarkets}</p>
+              <p className="text-xs text-muted-foreground font-medium">Total Markets</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Polymarket Count */}
-      <Card className="border-border">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-chart-1/20">
-              <Coins className="w-5 h-5 text-chart-1" />
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-center gap-4">
+            <div className="p-2.5 rounded-lg bg-chart-1/10">
+              <CircleDot className="w-5 h-5 text-chart-1" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{summary.polymarketCount}</p>
-              <p className="text-xs text-muted-foreground">Polymarket</p>
+              <p className="text-2xl font-semibold text-foreground">{summary.polymarketCount}</p>
+              <p className="text-xs text-muted-foreground font-medium">Polymarket</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Kalshi Count */}
-      <Card className="border-border">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-chart-2/20">
-              <Coins className="w-5 h-5 text-chart-2" />
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-center gap-4">
+            <div className="p-2.5 rounded-lg bg-chart-2/10">
+              <CircleDot className="w-5 h-5 text-chart-2" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{summary.kalshiCount}</p>
-              <p className="text-xs text-muted-foreground">Kalshi</p>
+              <p className="text-2xl font-semibold text-foreground">{summary.kalshiCount}</p>
+              <p className="text-xs text-muted-foreground font-medium">Kalshi</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Last Discovery */}
-      <Card className="border-border">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-accent">
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-center gap-4">
+            <div className="p-2.5 rounded-lg bg-muted">
               {isRunning ? (
                 <Loader2 className="w-5 h-5 text-primary animate-spin" />
               ) : (
-                <Clock className="w-5 h-5 text-accent-foreground" />
+                <Clock className="w-5 h-5 text-muted-foreground" />
               )}
             </div>
             <div>
               <p className="text-sm font-semibold text-foreground">
                 {isRunning ? 'Syncing...' : formatTime(summary.lastDiscoveryTime)}
               </p>
-              <p className="text-xs text-muted-foreground">Last Discovery</p>
+              <p className="text-xs text-muted-foreground font-medium">Last Sync</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Connection Mode */}
-      <Card className="border-border">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg ${
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-center gap-4">
+            <div className={`p-2.5 rounded-lg ${
               summary.connectionMode === 'polling' 
-                ? 'bg-chart-1/20' 
+                ? 'bg-chart-1/10' 
                 : summary.connectionMode === 'websocket' 
-                ? 'bg-green-500/20' 
-                : 'bg-destructive/20'
+                ? 'bg-chart-4/10' 
+                : 'bg-destructive/10'
             }`}>
               <Activity className={`w-5 h-5 ${
                 summary.connectionMode === 'polling' 
                   ? 'text-chart-1' 
                   : summary.connectionMode === 'websocket' 
-                  ? 'text-green-500' 
+                  ? 'text-chart-4' 
                   : 'text-destructive'
               }`} />
             </div>
@@ -119,17 +119,17 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
               <p className="text-sm font-semibold text-foreground capitalize">
                 {summary.connectionMode}
               </p>
-              <p className="text-xs text-muted-foreground">Update Mode</p>
+              <p className="text-xs text-muted-foreground font-medium">Mode</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Requests Per Minute */}
-      <Card className="border-border">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg ${hasErrors ? 'bg-destructive/20' : 'bg-primary/10'}`}>
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-center gap-4">
+            <div className={`p-2.5 rounded-lg ${hasErrors ? 'bg-destructive/10' : 'bg-primary/10'}`}>
               {hasErrors ? (
                 <AlertCircle className="w-5 h-5 text-destructive" />
               ) : (
@@ -140,8 +140,8 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
               <p className="text-sm font-semibold text-foreground">
                 {hasErrors ? 'Error' : `${summary.requestsPerMinute}/min`}
               </p>
-              <p className="text-xs text-muted-foreground">
-                {hasErrors ? 'Check settings' : 'API Requests'}
+              <p className="text-xs text-muted-foreground font-medium">
+                {hasErrors ? 'Check settings' : 'Requests'}
               </p>
             </div>
           </div>
