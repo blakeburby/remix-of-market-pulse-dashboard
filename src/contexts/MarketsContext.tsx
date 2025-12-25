@@ -425,13 +425,16 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     throw new Error('Max retries exceeded');
   };
 
+  const priceWarmupChainRef = useRef<Promise<void>>(Promise.resolve());
+
   const warmPolymarketPrices = async (
     discoveredMarkets: UnifiedMarket[],
     apiKey: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    maxCount?: number
   ) => {
-    // Only warm a limited set (what the user is most likely to be viewing)
-    const warmCount = tier === 'free' ? 50 : 300;
+    // Warm a limited set by default, but allow callers to override (e.g., per-page warmup).
+    const warmCount = maxCount ?? (tier === 'free' ? 50 : 300);
     const targets = discoveredMarkets
       .filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId)
       .slice(0, warmCount);
@@ -500,7 +503,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const maxPages = tier === 'free' ? 5 : 50;
     let pageCount = 0;
 
-    const baseUrl = platform === 'POLYMARKET' 
+    const baseUrl = platform === 'POLYMARKET'
       ? 'https://api.domeapi.io/v1/polymarket/markets'
       : 'https://api.domeapi.io/v1/kalshi/markets';
 
@@ -515,12 +518,19 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
         const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}`;
         const response = await rateLimitedFetch(url, apiKey, signal);
-        
+
         if (platform === 'POLYMARKET') {
           const data: PolymarketMarketsResponse = await response.json();
-          for (const market of data.markets) {
-            allMarkets.push(convertPolymarketMarket(market));
-          }
+
+          const pageMarkets: UnifiedMarket[] = data.markets.map(convertPolymarketMarket);
+          allMarkets.push(...pageMarkets);
+
+          // Warm Polymarket prices as pages are discovered so new markets don't sit at 50/50.
+          // Queue warmups sequentially to avoid huge bursts.
+          priceWarmupChainRef.current = priceWarmupChainRef.current
+            .then(() => warmPolymarketPrices(pageMarkets, apiKey, signal, pageMarkets.length))
+            .catch(() => undefined);
+
           if (!data.pagination.has_more) break;
         } else {
           const data: KalshiMarketsResponse = await response.json();
@@ -588,11 +598,6 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         }
         return Array.from(existing.values());
       });
-
-      // Immediately warm up prices for the first page-worth of Polymarket markets so we don't show 50/50.
-      // Run in the background (don't block discovery).
-      void warmPolymarketPrices(polymarketMarkets, apiKey, signal);
-
       if (signal.aborted) return;
 
       // Then fetch Kalshi
