@@ -377,7 +377,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     url: string, 
     apiKey: string,
     signal?: AbortSignal,
-    retries = 3
+    retries = 5
   ): Promise<Response> => {
     for (let attempt = 0; attempt < retries; attempt++) {
       // Wait for rate limiter
@@ -397,9 +397,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         });
 
         if (response.status === 429) {
-          // Rate limited - wait with exponential backoff
-          const waitTime = Math.pow(2, attempt + 1) * 2000 + Math.random() * 1000;
-          console.log(`Rate limited (429), waiting ${Math.round(waitTime)}ms before retry...`);
+          // Parse retry_after from API response
+          const data = await response.json().catch(() => ({}));
+          const retryAfter = data.retry_after || (Math.pow(2, attempt + 1) * 2);
+          const waitTime = (retryAfter * 1000) + Math.random() * 500;
+          console.log(`Rate limited (429), waiting ${Math.round(waitTime)}ms (retry_after: ${retryAfter}s)...`);
           await sleep(waitTime);
           continue;
         }
@@ -416,8 +418,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         if (attempt === retries - 1) {
           throw error;
         }
-        // Wait before retry
-        await sleep(Math.pow(2, attempt) * 1000);
+        // Wait before retry with longer backoff
+        await sleep(Math.pow(2, attempt + 1) * 1500);
       }
     }
     throw new Error('Max retries exceeded');
