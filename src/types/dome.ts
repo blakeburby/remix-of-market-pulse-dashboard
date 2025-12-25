@@ -196,3 +196,36 @@ export interface MarketFilters {
   sortBy: 'expiration' | 'volume' | 'probability' | 'lastUpdated' | 'title';
   sortOrder: 'asc' | 'desc';
 }
+
+// Cross-Platform Arbitrage Types
+
+// Matched market pair across platforms
+export interface CrossPlatformMatch {
+  polymarket: UnifiedMarket;
+  kalshi: UnifiedMarket;
+  matchScore: number; // 0-1 confidence of match
+  matchReason: string; // Why we think they're the same
+}
+
+// Arbitrage opportunity
+export interface ArbitrageOpportunity {
+  id: string;
+  match: CrossPlatformMatch;
+  type: 'locked' | 'spread'; // locked = guaranteed profit
+  
+  // The trade to execute
+  buyYesOn: Platform;
+  buyNoOn: Platform;
+  yesPlatformPrice: number; // 0-1
+  noPlatformPrice: number; // 0-1
+  
+  // Profit calculation
+  combinedCost: number; // e.g., 0.93
+  guaranteedPayout: number; // always 1.0
+  profitPercent: number; // e.g., 7.53%
+  profitPerDollar: number; // e.g., $0.0753
+  
+  // Timing
+  expirationDate: Date;
+  lastUpdated: Date;
+}
