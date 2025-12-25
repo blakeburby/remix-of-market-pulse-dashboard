@@ -43,16 +43,25 @@ export function useDomeWebSocket({
     const limits = TIER_LIMITS[tier];
     const maxSubscriptions = limits.subscriptions;
     
-    // Chunk market slugs based on tier limits
-    // Free tier can only have 2 subscriptions with 5 markets each = 10 markets max via WS
-    const chunkSize = tier === 'free' ? 5 : 100;
+    // Free tier: only 2 subscriptions allowed, so we can only track a few markets via WS
+    // We'll put all markets in a single subscription if possible
+    const maxMarketsPerSub = tier === 'free' ? 5 : 100;
+    const maxTotalMarkets = maxSubscriptions * maxMarketsPerSub;
+    const limitedSlugs = slugs.slice(0, maxTotalMarkets);
+    
+    // For free tier, just use 1 subscription to avoid limit issues
+    const numSubs = tier === 'free' ? 1 : Math.min(Math.ceil(limitedSlugs.length / maxMarketsPerSub), maxSubscriptions);
     const chunks: string[][] = [];
     
-    for (let i = 0; i < slugs.length && chunks.length < maxSubscriptions; i += chunkSize) {
-      chunks.push(slugs.slice(i, i + chunkSize));
+    for (let i = 0; i < numSubs; i++) {
+      const start = i * maxMarketsPerSub;
+      const end = Math.min(start + maxMarketsPerSub, limitedSlugs.length);
+      if (start < limitedSlugs.length) {
+        chunks.push(limitedSlugs.slice(start, end));
+      }
     }
 
-    console.log(`[WS] Subscribing to ${chunks.length} chunks with ${slugs.length} total markets`);
+    console.log(`[WS] Subscribing to ${chunks.length} chunk(s) with ${limitedSlugs.length} total markets (tier: ${tier}, max subs: ${maxSubscriptions})`);
 
     chunks.forEach((chunk, index) => {
       const subscription: DomeWSSubscription = {
@@ -70,7 +79,7 @@ export function useDomeWebSocket({
           ws.send(JSON.stringify(subscription));
           console.log(`[WS] Sent subscription ${index + 1}/${chunks.length} for ${chunk.length} markets`);
         }
-      }, index * 100); // Stagger subscriptions
+      }, index * 200); // Stagger subscriptions
     });
   }, [tier]);
 
