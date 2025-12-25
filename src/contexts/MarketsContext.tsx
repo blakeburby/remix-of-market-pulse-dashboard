@@ -373,34 +373,20 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     };
   };
 
-  // Track last discovery request time for consistent pacing
-  const discoveryLastRequestTime = useRef<number>(0);
-
   // Make a rate-limited API request with retry logic
-  // Uses consistent QPS pacing (same speed for discovery and prices)
   const rateLimitedFetch = async (
     url: string, 
     apiKey: string,
     signal?: AbortSignal,
     retries = 3
   ): Promise<Response> => {
-    // Enforce consistent QPS pacing for discovery (matches price update pacing)
-    const minDelayMs = tier === 'free' ? 1050 : tier === 'dev' ? 110 : 15;
-    
     for (let attempt = 0; attempt < retries; attempt++) {
-      const now = Date.now();
-      const timeSinceLastRequest = now - discoveryLastRequestTime.current;
-      
-      // Wait to respect QPS limit
-      if (timeSinceLastRequest < minDelayMs) {
-        await sleep(minDelayMs - timeSinceLastRequest);
-      }
+      // Wait for rate limiter
+      await globalRateLimiter.waitAndAcquire();
       
       if (signal?.aborted) {
         throw new Error('Aborted');
       }
-
-      discoveryLastRequestTime.current = Date.now();
 
       try {
         const response = await fetch(url, {
