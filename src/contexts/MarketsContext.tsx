@@ -570,10 +570,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return { tokenId, price: null };
     }
 
-    // Check discovery is not running - give it priority
-    if (syncState.POLYMARKET.isRunning || syncState.KALSHI.isRunning) {
-      return { tokenId, price: null };
-    }
+    // Allow price updates to run alongside discovery
 
     try {
       const response = await fetch(
@@ -635,11 +632,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Skip if discovery is running (give it priority)
-    if (syncState.POLYMARKET.isRunning || syncState.KALSHI.isRunning) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 2000);
-      return;
-    }
+    // Don't skip during discovery - run price updates in parallel
+    // Discovery uses its own rate limiting via globalRateLimiter
 
     // Enforce minimum delay between requests based on tier QPS
     // Free: 1 QPS (1000ms), Dev: 100 QPS (10ms), Enterprise: 1000 QPS (1ms)
@@ -728,6 +722,18 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     // Initial discovery
     runDiscovery();
 
+    // Automatically start price updates when discovery starts
+    if (!isPriceUpdatingRef.current) {
+      isPriceUpdatingRef.current = true;
+      setIsPriceUpdating(true);
+      // Delay slightly to let first markets load
+      setTimeout(() => {
+        if (isPriceUpdatingRef.current) {
+          runPriceUpdate();
+        }
+      }, 2000);
+    }
+
     // Schedule periodic rediscovery (longer interval for Free tier)
     const intervalMs = tier === 'free' ? 120000 : 60000;
     discoveryIntervalRef.current = setInterval(() => {
@@ -735,7 +741,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         runDiscovery();
       }
     }, intervalMs);
-  }, [runDiscovery, tier]);
+  }, [runDiscovery, runPriceUpdate, tier]);
 
   const stopDiscovery = useCallback(() => {
     isDiscoveringRef.current = false;
