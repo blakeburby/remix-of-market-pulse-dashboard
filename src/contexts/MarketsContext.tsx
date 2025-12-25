@@ -607,11 +607,31 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
       if (signal.aborted) return;
 
-      // Update markets with Polymarket data
+      // Update markets with Polymarket data (preserve any already-warmed/live prices)
       setMarkets(prev => {
-        const existing = new Map(prev.filter(m => m.platform !== 'POLYMARKET').map(m => [m.id, m]));
+        const existing = new Map(prev.map(m => [m.id, m]));
         for (const market of polymarketMarkets) {
-          existing.set(market.id, market);
+          const prevMarket = existing.get(market.id);
+          if (prevMarket && prevMarket.platform === 'POLYMARKET') {
+            existing.set(market.id, {
+              ...market,
+              sideA: {
+                ...market.sideA,
+                price: prevMarket.sideA.price,
+                probability: prevMarket.sideA.probability,
+                odds: prevMarket.sideA.odds,
+              },
+              sideB: {
+                ...market.sideB,
+                price: prevMarket.sideB.price,
+                probability: prevMarket.sideB.probability,
+                odds: prevMarket.sideB.odds,
+              },
+              lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
+            });
+          } else {
+            existing.set(market.id, market);
+          }
         }
         return Array.from(existing.values());
       });
@@ -622,11 +642,31 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       
       if (signal.aborted) return;
 
-      // Update markets with Kalshi data
+      // Update markets with Kalshi data (preserve any already-warmed/live prices)
       setMarkets(prev => {
-        const existing = new Map(prev.filter(m => m.platform !== 'KALSHI').map(m => [m.id, m]));
+        const existing = new Map(prev.map(m => [m.id, m]));
         for (const market of kalshiMarkets) {
-          existing.set(market.id, market);
+          const prevMarket = existing.get(market.id);
+          if (prevMarket && prevMarket.platform === 'KALSHI') {
+            existing.set(market.id, {
+              ...market,
+              sideA: {
+                ...market.sideA,
+                price: prevMarket.sideA.price,
+                probability: prevMarket.sideA.probability,
+                odds: prevMarket.sideA.odds,
+              },
+              sideB: {
+                ...market.sideB,
+                price: prevMarket.sideB.price,
+                probability: prevMarket.sideB.probability,
+                odds: prevMarket.sideB.odds,
+              },
+              lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
+            });
+          } else {
+            existing.set(market.id, market);
+          }
         }
         return Array.from(existing.values());
       });
