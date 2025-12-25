@@ -7,13 +7,16 @@ import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { MarketFilters } from '@/components/dashboard/MarketFilters';
 import { MarketsTable } from '@/components/dashboard/MarketsTable';
 import { EventsView } from '@/components/dashboard/EventsView';
+import { ArbitrageView } from '@/components/dashboard/ArbitrageView';
 import { SettingsPanel } from '@/components/dashboard/SettingsPanel';
+
+export type ViewMode = 'flat' | 'grouped' | 'arbitrage';
 
 export default function DashboardPage() {
   const { isAuthenticated, logout } = useAuth();
   const { summary, syncState } = useMarkets();
   const navigate = useNavigate();
-  const [viewMode, setViewMode] = useState<'flat' | 'grouped'>('grouped');
+  const [viewMode, setViewMode] = useState<ViewMode>('grouped');
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -24,6 +27,18 @@ export default function DashboardPage() {
   if (!isAuthenticated) {
     return null;
   }
+
+  const renderView = () => {
+    switch (viewMode) {
+      case 'arbitrage':
+        return <ArbitrageView />;
+      case 'flat':
+        return <MarketsTable />;
+      case 'grouped':
+      default:
+        return <EventsView />;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -41,8 +56,8 @@ export default function DashboardPage() {
           <SettingsPanel />
         </div>
         
-        {/* Markets View - Grouped or Flat */}
-        {viewMode === 'grouped' ? <EventsView /> : <MarketsTable />}
+        {/* Markets View - Grouped, Flat, or Arbitrage */}
+        {renderView()}
       </main>
     </div>
   );

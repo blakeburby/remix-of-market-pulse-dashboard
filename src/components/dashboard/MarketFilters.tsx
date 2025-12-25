@@ -2,11 +2,12 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useMarkets } from '@/contexts/MarketsContext';
-import { Search, List, Layers } from 'lucide-react';
+import { Search, List, Layers, Target } from 'lucide-react';
+import type { ViewMode } from '@/pages/Dashboard';
 
 interface MarketFiltersProps {
-  viewMode: 'flat' | 'grouped';
-  onViewModeChange: (mode: 'flat' | 'grouped') => void;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
 }
 
 export function MarketFilters({ viewMode, onViewModeChange }: MarketFiltersProps) {
@@ -18,7 +19,7 @@ export function MarketFilters({ viewMode, onViewModeChange }: MarketFiltersProps
       <ToggleGroup 
         type="single" 
         value={viewMode} 
-        onValueChange={(v) => v && onViewModeChange(v as 'flat' | 'grouped')}
+        onValueChange={(v) => v && onViewModeChange(v as ViewMode)}
         className="h-9 sm:h-10"
       >
         <ToggleGroupItem value="grouped" aria-label="Group by event" className="h-full px-2.5 sm:px-3 text-xs sm:text-sm">
@@ -28,6 +29,10 @@ export function MarketFilters({ viewMode, onViewModeChange }: MarketFiltersProps
         <ToggleGroupItem value="flat" aria-label="Flat list" className="h-full px-2.5 sm:px-3 text-xs sm:text-sm">
           <List className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1 sm:mr-1.5" />
           <span className="hidden xs:inline">Markets</span>
+        </ToggleGroupItem>
+        <ToggleGroupItem value="arbitrage" aria-label="Arbitrage scanner" className="h-full px-2.5 sm:px-3 text-xs sm:text-sm">
+          <Target className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1 sm:mr-1.5" />
+          <span className="hidden xs:inline">Arbitrage</span>
         </ToggleGroupItem>
       </ToggleGroup>
 
