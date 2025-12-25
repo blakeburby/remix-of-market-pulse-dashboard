@@ -484,25 +484,19 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Track failed token IDs to avoid retrying them
   const failedTokenIds = useRef<Set<string>>(new Set());
-  const pendingRequests = useRef<Set<string>>(new Set());
+  const rateLimitedUntil = useRef<number>(0);
+  const lastRequestTime = useRef<number>(0);
 
-  // Fetch price for a Polymarket token (without rate limiter - caller handles batching)
+  // Fetch price for a Polymarket token
   const fetchTokenPriceDirect = async (
     tokenId: string, 
-    apiKey: string, 
-    signal?: AbortSignal
-  ): Promise<{ tokenId: string; price: number | null }> => {
-    if (failedTokenIds.current.has(tokenId) || pendingRequests.current.has(tokenId)) {
+    apiKey: string
+  ): Promise<{ tokenId: string; price: number | null; rateLimited?: boolean }> => {
+    if (failedTokenIds.current.has(tokenId)) {
       return { tokenId, price: null };
     }
 
-    pendingRequests.current.add(tokenId);
-
     try {
-      if (signal?.aborted) {
-        return { tokenId, price: null };
-      }
-
       const response = await fetch(
         `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
         {
@@ -510,7 +504,6 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
-          signal,
         }
       );
 
@@ -520,8 +513,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (response.status === 429) {
-        // Rate limited - return null, will retry
-        return { tokenId, price: null };
+        const data = await response.json().catch(() => ({}));
+        const retryAfter = data.retry_after || 5;
+        rateLimitedUntil.current = Date.now() + retryAfter * 1000;
+        console.log(`[Price] Rate limited, backing off for ${retryAfter}s`);
+        return { tokenId, price: null, rateLimited: true };
       }
 
       if (!response.ok) {
@@ -531,12 +527,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       const data: PolymarketPriceResponse = await response.json();
       return { tokenId, price: data.price };
     } catch (error) {
-      if ((error as Error).name === 'AbortError') {
-        return { tokenId, price: null };
-      }
       return { tokenId, price: null };
-    } finally {
-      pendingRequests.current.delete(tokenId);
     }
   };
 
@@ -544,7 +535,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const marketsRef = useRef(markets);
   marketsRef.current = markets;
 
-  // Batch price update - fetches multiple prices in parallel
+  // Sequential price update with proper rate limiting
   const runPriceUpdate = useCallback(async () => {
     if (!isPriceUpdatingRef.current) return;
 
@@ -554,12 +545,28 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // Check if we're rate limited
+    const now = Date.now();
+    if (now < rateLimitedUntil.current) {
+      const waitTime = rateLimitedUntil.current - now + 100;
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, waitTime);
+      return;
+    }
+
+    // Enforce minimum delay between requests based on tier QPS
+    // Free: 1/sec, Dev: 10/sec, Enterprise: 100/sec (being conservative)
+    const minDelayMs = tier === 'free' ? 1050 : tier === 'dev' ? 110 : 15;
+    const timeSinceLastRequest = now - lastRequestTime.current;
+    if (timeSinceLastRequest < minDelayMs) {
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, minDelayMs - timeSinceLastRequest);
+      return;
+    }
+
     const currentMarkets = marketsRef.current;
     const polymarketMarkets = currentMarkets.filter(m => 
       m.platform === 'POLYMARKET' && 
       m.sideA.tokenId && 
-      !failedTokenIds.current.has(m.sideA.tokenId) &&
-      !pendingRequests.current.has(m.sideA.tokenId)
+      !failedTokenIds.current.has(m.sideA.tokenId)
     );
     
     if (polymarketMarkets.length === 0) {
@@ -567,13 +574,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Determine batch size and timing based on tier
-    // Free tier: 1 req/sec, Dev: 100 req/sec, Enterprise: 1000 req/sec
-    const batchSize = tier === 'free' ? 1 : tier === 'dev' ? 10 : 50;
-    const pollInterval = tier === 'free' ? 1100 : tier === 'dev' ? 150 : 60;
-
     // Prioritize markets without prices yet, then oldest updated
-    const now = Date.now();
     const sortedMarkets = [...polymarketMarkets].sort((a, b) => {
       const aHasPrice = Math.abs(a.sideA.probability - 0.5) > 0.001;
       const bHasPrice = Math.abs(b.sideA.probability - 0.5) > 0.001;
@@ -582,30 +583,23 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return a.lastUpdated.getTime() - b.lastUpdated.getTime();
     });
     
-    // Get batch of markets to update
-    const batch = sortedMarkets.slice(0, batchSize);
+    // Get the next market to update
+    const market = sortedMarkets[0];
+    lastRequestTime.current = Date.now();
 
-    // Fetch all prices in parallel
-    const results = await Promise.all(
-      batch.map(market => 
-        fetchTokenPriceDirect(market.sideA.tokenId!, apiKey)
-      )
-    );
+    const result = await fetchTokenPriceDirect(market.sideA.tokenId!, apiKey);
 
-    // Build a map of token prices
-    const priceMap = new Map<string, number>();
-    for (const { tokenId, price } of results) {
-      if (price !== null) {
-        priceMap.set(tokenId, price);
-      }
+    if (result.rateLimited) {
+      // Already set rateLimitedUntil, just schedule next check
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 100);
+      return;
     }
 
-    // Update all markets with new prices in one setState call
-    if (priceMap.size > 0 && isPriceUpdatingRef.current) {
+    if (result.price !== null && isPriceUpdatingRef.current) {
+      const priceA = result.price;
+      const priceB = 1 - priceA;
       setMarkets(prev => prev.map(m => {
-        if (m.sideA.tokenId && priceMap.has(m.sideA.tokenId)) {
-          const priceA = priceMap.get(m.sideA.tokenId)!;
-          const priceB = 1 - priceA;
+        if (m.id === market.id) {
           return {
             ...m,
             sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
@@ -616,20 +610,16 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         return m;
       }));
       setLastPriceUpdate(new Date());
+    } else if (failedTokenIds.current.has(market.sideA.tokenId!)) {
+      // Mark failed market as updated so we skip it
+      setMarkets(prev => prev.map(m => 
+        m.id === market.id ? { ...m, lastUpdated: new Date() } : m
+      ));
     }
 
-    // Also mark failed tokens as updated
-    for (const market of batch) {
-      if (market.sideA.tokenId && failedTokenIds.current.has(market.sideA.tokenId)) {
-        setMarkets(prev => prev.map(m => 
-          m.id === market.id ? { ...m, lastUpdated: new Date() } : m
-        ));
-      }
-    }
-
-    // Schedule next batch
+    // Schedule next update - use minimal delay, rate limiting handles the rest
     if (isPriceUpdatingRef.current) {
-      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, pollInterval);
+      priceUpdateTimeoutRef.current = setTimeout(runPriceUpdate, 10);
     }
   }, [getApiKey, tier]);
 
