@@ -739,7 +739,34 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const priceCursorRef = useRef(0);
   const lastQpsLogAtRef = useRef(0);
 
-  const dispatchOnePriceFetch = useCallback(async () => {
+  // Fire a single price fetch - non-blocking, caller is responsible for pacing
+  const firePriceFetch = useCallback((market: UnifiedMarket, apiKey: string) => {
+    const tokenId = market.sideA.tokenId!;
+    
+    // Fire and forget - don't await
+    fetchTokenPriceDirect(tokenId, apiKey).then(result => {
+      if (!isPriceUpdatingRef.current) return;
+      
+      if (result.rateLimited) return;
+      
+      if (typeof result.price === 'number') {
+        const priceA = result.price;
+        const priceB = 1 - priceA;
+        setMarkets(prev => prev.map(m => {
+          if (m.id !== market.id) return m;
+          return {
+            ...m,
+            sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
+            sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
+            lastUpdated: new Date(),
+          };
+        }));
+        setLastPriceUpdate(new Date());
+      }
+    });
+  }, []);
+
+  const dispatchOnePriceFetch = useCallback(() => {
     if (!isPriceUpdatingRef.current) return;
 
     const apiKey = getApiKey();
@@ -765,34 +792,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const idx = priceCursorRef.current % tokenMarkets.length;
     priceCursorRef.current = idx + 1;
     const market = tokenMarkets[idx];
-    const tokenId = market.sideA.tokenId!;
 
-    // Enforce steady pacing here as well (no burst) in case interval drifts
-    await globalRateLimiter.waitAndAcquire();
+    // Track request for RPM counter
+    globalRateLimiter.trackRequest();
 
-    const result = await fetchTokenPriceDirect(tokenId, apiKey);
-
-    if (!isPriceUpdatingRef.current) return;
-
-    if (result.rateLimited) {
-      // fetchTokenPriceDirect sets priceRateLimitedUntil
-      return;
-    }
-
-    if (typeof result.price === 'number') {
-      const priceA = result.price;
-      const priceB = 1 - priceA;
-      setMarkets(prev => prev.map(m => {
-        if (m.id !== market.id) return m;
-        return {
-          ...m,
-          sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
-          sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
-          lastUpdated: new Date(),
-        };
-      }));
-      setLastPriceUpdate(new Date());
-    }
+    // Fire non-blocking fetch
+    firePriceFetch(market, apiKey);
 
     // Debug: log achieved RPM every ~5s
     const logNow = Date.now();
@@ -800,7 +805,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       lastQpsLogAtRef.current = logNow;
       console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} intervalMs=${globalRateLimiter.getIntervalMs()} tokens=${tokenMarkets.length}`);
     }
-  }, [getApiKey]);
+  }, [getApiKey, firePriceFetch]);
 
   const startSteadyPriceLoop = useCallback(() => {
     if (priceDispatchIntervalRef.current) return;
