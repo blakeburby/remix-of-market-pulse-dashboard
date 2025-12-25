@@ -333,8 +333,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         probability: 0.5,
         odds: 2,
       },
-      // Force initial tokens to be considered stale so polling updates immediately
-      lastUpdated: new Date(0),
+      lastUpdated: new Date(),
     };
   };
 
