@@ -36,7 +36,9 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
     : 0;
 
   const { discoveryProgress, liveRpm } = summary;
-  const isDiscovering = discoveryProgress && (discoveryProgress.polymarket.hasMore || discoveryProgress.kalshi.hasMore);
+  const isDiscovering = Boolean(
+    discoveryProgress?.polymarket?.hasMore || discoveryProgress?.kalshi?.hasMore
+  );
 
   return (
     <div className="space-y-3 sm:space-y-4">
