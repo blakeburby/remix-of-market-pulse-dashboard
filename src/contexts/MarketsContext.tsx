@@ -446,8 +446,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     if (targets.length === 0) return;
 
     const pending = new Map<string, number>();
-    // Larger batch size for true parallel fetching - fully utilize 100 QPS rate limit
-    const BATCH_SIZE = tier === 'free' ? 5 : 100;
+    // Conservative batch size - let rate limiter handle pacing
+    const BATCH_SIZE = tier === 'free' ? 3 : 10;
 
     const flush = () => {
       if (pending.size === 0) return;
@@ -712,6 +712,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       if (response.status === 429) {
         const data = await response.json().catch(() => ({}));
         const retryAfter = data.retry_after || 5;
+        globalRateLimiter.markRateLimited(retryAfter);
         priceRateLimitedUntil.current = Date.now() + retryAfter * 1000;
         console.log(`[Price] Rate limited, backing off for ${retryAfter}s`);
         return { tokenId, price: null, rateLimited: true };
@@ -772,9 +773,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const apiKey = getApiKey();
     if (!apiKey) return;
 
-    // Backoff if API told us to
+    // Backoff if API told us to or rate limiter says wait
     const now = Date.now();
     if (now < priceRateLimitedUntil.current) return;
+    if (!globalRateLimiter.canAcquireNow()) return;
 
     const candidateMarkets = filteredMarketsRef.current.length > 0
       ? filteredMarketsRef.current
@@ -793,17 +795,17 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     priceCursorRef.current = idx + 1;
     const market = tokenMarkets[idx];
 
-    // Track request for RPM counter
+    // Track request in rate limiter
     globalRateLimiter.trackRequest();
 
     // Fire non-blocking fetch
     firePriceFetch(market, apiKey);
 
-    // Debug: log achieved RPM every ~5s
+    // Debug: log achieved RPM every ~10s
     const logNow = Date.now();
-    if (logNow - lastQpsLogAtRef.current > 5000) {
+    if (logNow - lastQpsLogAtRef.current > 10000) {
       lastQpsLogAtRef.current = logNow;
-      console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} intervalMs=${globalRateLimiter.getIntervalMs()} tokens=${tokenMarkets.length}`);
+      console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} intervalMs=${globalRateLimiter.getIntervalMs()} tokens=${tokenMarkets.length} available=${globalRateLimiter.getAvailableTokens()}`);
     }
   }, [getApiKey, firePriceFetch]);
 

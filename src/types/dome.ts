@@ -4,11 +4,12 @@ export type Platform = 'POLYMARKET' | 'KALSHI';
 export type MarketStatus = 'open' | 'closed';
 export type DomeTier = 'free' | 'dev' | 'enterprise';
 
-// Rate limits per tier
+// Rate limits per tier - conservative to avoid 429s
+// API uses 10-second sliding window, so we target 80% of limit for safety
 export const TIER_LIMITS: Record<DomeTier, { qps: number; qp10s: number; subscriptions: number; walletsPerSub: number }> = {
-  free: { qps: 1, qp10s: 10, subscriptions: 2, walletsPerSub: 5 },
-  dev: { qps: 100, qp10s: 500, subscriptions: 500, walletsPerSub: 500 },
-  enterprise: { qps: 1000, qp10s: 5000, subscriptions: 10000, walletsPerSub: 10000 },
+  free: { qps: 1, qp10s: 8, subscriptions: 2, walletsPerSub: 5 },
+  dev: { qps: 4, qp10s: 40, subscriptions: 500, walletsPerSub: 500 },  // API limit is 50/10s, we use 40 for safety
+  enterprise: { qps: 80, qp10s: 800, subscriptions: 10000, walletsPerSub: 10000 },
 };
 
 // Polymarket Market Types
