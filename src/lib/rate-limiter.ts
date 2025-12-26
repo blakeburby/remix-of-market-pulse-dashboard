@@ -1,13 +1,13 @@
-// Steady-rate limiter for Dome API - exactly 100 QPS, no bursting
+// Sliding-window rate limiter for Dome API
+// Uses 10-second window to match API's rate limiting behavior
 
 import { DomeTier, TIER_LIMITS } from '@/types/dome';
 
 export class RateLimiter {
   private tier: DomeTier;
-  private requestsInLastMinute: number[] = [];
+  private requestTimestamps: number[] = [];  // Timestamps within sliding window
   private lastRequestTime: number = 0;
-  private requestQueue: Array<() => void> = [];
-  private isProcessingQueue: boolean = false;
+  private rateLimitedUntil: number = 0;  // Pause until this timestamp if 429 received
 
   constructor(tier: DomeTier = 'free') {
     this.tier = tier;
@@ -23,114 +23,113 @@ export class RateLimiter {
   }
 
   public getIntervalMs(): number {
-    // Exact interval between requests: 1000ms / QPS
-    // For dev tier (100 QPS): 10ms between requests
+    // Use 10-second window limit for pacing
     const limit = TIER_LIMITS[this.tier];
-    return Math.ceil(1000 / limit.qps);
+    // Spread requests evenly over 10 seconds
+    return Math.ceil(10000 / limit.qp10s);
   }
 
-  private cleanupOldRequests() {
+  // Mark rate limited by API - wait the specified duration
+  public markRateLimited(retryAfterSeconds: number): void {
+    this.rateLimitedUntil = Date.now() + (retryAfterSeconds * 1000) + 500; // +500ms buffer
+    console.log(`[RateLimiter] Rate limited, pausing for ${retryAfterSeconds}s`);
+  }
+
+  private cleanupWindow() {
     const now = Date.now();
-    const oneMinuteAgo = now - 60000;
-    this.requestsInLastMinute = this.requestsInLastMinute.filter(t => t > oneMinuteAgo);
+    const windowStart = now - 10000; // 10-second sliding window
+    this.requestTimestamps = this.requestTimestamps.filter(t => t > windowStart);
   }
 
-  // Wait for next available slot - enforces exactly QPS rate with no bursting
+  private getRequestsInWindow(): number {
+    this.cleanupWindow();
+    return this.requestTimestamps.length;
+  }
+
+  // Wait for next available slot within rate limit
   async waitAndAcquire(): Promise<void> {
-    const intervalMs = this.getIntervalMs();
-    const now = Date.now();
-    const timeSinceLastRequest = now - this.lastRequestTime;
+    const limit = TIER_LIMITS[this.tier];
     
-    // If we need to wait, wait exactly the right amount
-    if (timeSinceLastRequest < intervalMs) {
+    // If we're rate limited by API, wait
+    let now = Date.now();
+    if (now < this.rateLimitedUntil) {
+      const waitTime = this.rateLimitedUntil - now;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+    
+    // Check sliding window - if at limit, wait for oldest request to expire
+    this.cleanupWindow();
+    while (this.requestTimestamps.length >= limit.qp10s) {
+      const oldestTimestamp = this.requestTimestamps[0];
+      const waitTime = (oldestTimestamp + 10000) - Date.now() + 100; // Wait until it expires + buffer
+      if (waitTime > 0) {
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+      this.cleanupWindow();
+    }
+    
+    // Also enforce minimum interval between requests
+    now = Date.now();
+    const intervalMs = this.getIntervalMs();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    if (timeSinceLastRequest < intervalMs && this.lastRequestTime > 0) {
       const waitTime = intervalMs - timeSinceLastRequest;
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
     
     this.lastRequestTime = Date.now();
-    this.requestsInLastMinute.push(this.lastRequestTime);
-    this.cleanupOldRequests();
+    this.requestTimestamps.push(this.lastRequestTime);
   }
 
-  // Stream-based acquisition for steady 100 QPS
-  // Fires callback at exactly QPS rate - no bursting
+  // Stream-based acquisition - fires callback as tokens become available
   async acquireStream(count: number, onTokenAvailable: (index: number) => void): Promise<void> {
-    const intervalMs = this.getIntervalMs();
-    
     for (let i = 0; i < count; i++) {
-      const now = Date.now();
-      const timeSinceLastRequest = now - this.lastRequestTime;
-      
-      // Wait for exact interval if needed
-      if (timeSinceLastRequest < intervalMs && this.lastRequestTime > 0) {
-        const waitTime = intervalMs - timeSinceLastRequest;
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
-      
-      this.lastRequestTime = Date.now();
-      this.requestsInLastMinute.push(this.lastRequestTime);
-      
-      // Fire callback immediately after acquiring slot
+      await this.waitAndAcquire();
       onTokenAvailable(i);
     }
-    
-    this.cleanupOldRequests();
   }
 
-  // Acquire multiple slots at steady rate (no bursting)
-  // Waits for all slots to be acquired at QPS rate
-  async acquireMultiple(count: number): Promise<void> {
-    const intervalMs = this.getIntervalMs();
-    
-    for (let i = 0; i < count; i++) {
-      const now = Date.now();
-      const timeSinceLastRequest = now - this.lastRequestTime;
-      
-      if (timeSinceLastRequest < intervalMs && this.lastRequestTime > 0) {
-        const waitTime = intervalMs - timeSinceLastRequest;
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
-      
-      this.lastRequestTime = Date.now();
-      this.requestsInLastMinute.push(this.lastRequestTime);
-    }
-    
-    this.cleanupOldRequests();
-  }
-
-  // Simple acquire - returns true if slot available now
-  async acquire(): Promise<boolean> {
-    const intervalMs = this.getIntervalMs();
+  // Check if a slot is available right now (non-blocking)
+  canAcquireNow(): boolean {
     const now = Date.now();
+    if (now < this.rateLimitedUntil) return false;
+    
+    this.cleanupWindow();
+    const limit = TIER_LIMITS[this.tier];
+    if (this.requestTimestamps.length >= limit.qp10s) return false;
+    
+    const intervalMs = this.getIntervalMs();
     const timeSinceLastRequest = now - this.lastRequestTime;
+    return timeSinceLastRequest >= intervalMs || this.lastRequestTime === 0;
+  }
+
+  // Try to acquire without waiting - returns true if acquired
+  tryAcquire(): boolean {
+    if (!this.canAcquireNow()) return false;
     
-    if (timeSinceLastRequest >= intervalMs || this.lastRequestTime === 0) {
-      this.lastRequestTime = now;
-      this.requestsInLastMinute.push(now);
-      this.cleanupOldRequests();
-      return true;
-    }
-    
-    return false;
+    const now = Date.now();
+    this.lastRequestTime = now;
+    this.requestTimestamps.push(now);
+    return true;
   }
 
   getRequestsPerMinute(): number {
-    this.cleanupOldRequests();
-    return this.requestsInLastMinute.length;
+    // Extrapolate from 10s window to 1 minute
+    this.cleanupWindow();
+    return this.requestTimestamps.length * 6;
   }
 
   getAvailableTokens(): number {
-    // With no bursting, either 1 or 0 available
-    const intervalMs = this.getIntervalMs();
-    const timeSinceLastRequest = Date.now() - this.lastRequestTime;
-    return timeSinceLastRequest >= intervalMs ? 1 : 0;
+    this.cleanupWindow();
+    const limit = TIER_LIMITS[this.tier];
+    return Math.max(0, limit.qp10s - this.requestTimestamps.length);
   }
 
-  // Track a request without waiting - for non-blocking fire-and-forget
+  // Track a request (for fire-and-forget calls where we still want to count)
   trackRequest(): void {
     this.lastRequestTime = Date.now();
-    this.requestsInLastMinute.push(this.lastRequestTime);
-    this.cleanupOldRequests();
+    this.requestTimestamps.push(this.lastRequestTime);
+    this.cleanupWindow();
   }
 }
 
