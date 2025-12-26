@@ -207,7 +207,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
   if (context === null) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    // Defensive fallback: avoid blank screen if provider wiring breaks.
+    // The app will behave as logged-out (Dashboard route will redirect).
+    console.error('useAuth called outside AuthProvider');
+    return {
+      isAuthenticated: false,
+      isValidating: false,
+      error: 'Authentication provider not available',
+      tier: 'free',
+      login: async () => false,
+      logout: () => {},
+      setTier: () => {},
+      getApiKey: () => null,
+    };
   }
   return context;
 }
