@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo, useDeferredValue } from 'react';
 import { 
   UnifiedMarket, 
   Platform, 
@@ -75,10 +75,14 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const rpmIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const priceUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const priceDispatchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const batchFlushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isDiscoveringRef = useRef(false);
   const isPriceUpdatingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const [wsEnabled, setWsEnabled] = useState(false);
+
+  // Batched price updates - accumulate updates and flush every 500ms to reduce re-renders
+  const pendingPriceUpdates = useRef<Map<string, { priceA: number; priceB: number; timestamp: Date }>>(new Map());
 
   // Computed values
   const [isDiscovering, setIsDiscovering] = useState(false);
@@ -148,9 +152,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     enabled: wsEnabled && isAuthenticated,
   });
 
-  // Filter and sort markets
+  // Deferred markets for expensive computations - prevents UI blocking
+  const deferredMarkets = useDeferredValue(markets);
+
+  // Filter and sort markets - use deferred markets for smoother UI
   const filteredMarkets = React.useMemo(() => {
-    let result = [...markets];
+    let result = [...deferredMarkets];
 
     // Apply search filter
     if (filters.search) {
@@ -197,7 +204,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     });
 
     return result;
-  }, [markets, filters]);
+  }, [deferredMarkets, filters]);
 
   // Group filtered markets by event
   const groupedEvents: GroupedEvent[] = React.useMemo(() => {
@@ -243,16 +250,16 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     return events;
   }, [filteredMarkets, filters.sortOrder]);
 
-  // Calculate summary
+  // Calculate summary - use deferred markets for smoother UI
   const summary: DashboardSummary = React.useMemo(() => {
-    const polymarketCount = markets.filter(m => m.platform === 'POLYMARKET').length;
-    const kalshiCount = markets.filter(m => m.platform === 'KALSHI').length;
-    const tokenCount = markets.reduce((acc, m) => {
+    const polymarketCount = deferredMarkets.filter(m => m.platform === 'POLYMARKET').length;
+    const kalshiCount = deferredMarkets.filter(m => m.platform === 'KALSHI').length;
+    const tokenCount = deferredMarkets.reduce((acc, m) => {
       return acc + (m.sideA.tokenId ? 1 : 0) + (m.sideB.tokenId ? 1 : 0);
     }, 0);
 
     // Count markets with updated prices (not default 50/50)
-    const updatedPriceCount = markets.filter(m => 
+    const updatedPriceCount = deferredMarkets.filter(m => 
       Math.abs(m.sideA.probability - 0.5) > 0.001 || m.platform === 'KALSHI'
     ).length;
 
@@ -270,7 +277,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
 
     return {
-      totalMarkets: markets.length,
+      totalMarkets: deferredMarkets.length,
       polymarketCount,
       kalshiCount,
       totalTokensTracked: tokenCount,
@@ -282,7 +289,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       discoveryProgress,
       liveRpm,
     };
-  }, [markets, syncState, lastPriceUpdate, isPriceUpdating, wsConnected, discoveryProgress, liveRpm]);
+  }, [deferredMarkets, syncState, lastPriceUpdate, isPriceUpdating, wsConnected, discoveryProgress, liveRpm]);
 
   const setFilters = useCallback((newFilters: Partial<MarketFilters>) => {
     setFiltersState(prev => ({ ...prev, ...newFilters }));
@@ -306,8 +313,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       .join(' ');
   };
 
-  // Convert Polymarket market to unified format
-  const convertPolymarketMarket = (market: PolymarketMarket): UnifiedMarket => {
+  // Convert Polymarket market to unified format - memoized to prevent recreation
+  const convertPolymarketMarket = useCallback((market: PolymarketMarket): UnifiedMarket => {
     const isYesNoMarket =
       market.side_a.label.toLowerCase().includes('yes') ||
       market.side_b.label.toLowerCase().includes('no');
@@ -344,11 +351,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       },
       lastUpdated: new Date(),
     };
-  };
+  }, []);
 
-  // Convert Kalshi market to unified format
+  // Convert Kalshi market to unified format - memoized to prevent recreation
   // Kalshi prices come directly from the API discovery, so they're fresh
-  const convertKalshiMarket = (market: KalshiMarket): UnifiedMarket => {
+  const convertKalshiMarket = useCallback((market: KalshiMarket): UnifiedMarket => {
     const yesProb = market.last_price / 100;
     const noProb = 1 - yesProb;
     const now = new Date();
@@ -382,7 +389,38 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       lastUpdated: now,
       lastPriceUpdatedAt: now, // Kalshi prices come from discovery, mark as fresh
     };
-  };
+  }, []);
+
+  // Flush pending price updates to state - called on interval
+  const flushPendingPriceUpdates = useCallback(() => {
+    if (pendingPriceUpdates.current.size === 0) return;
+    
+    const updates = new Map(pendingPriceUpdates.current);
+    pendingPriceUpdates.current.clear();
+    
+    setMarkets(prev => prev.map(m => {
+      const update = updates.get(m.id);
+      if (!update) return m;
+      return {
+        ...m,
+        sideA: { ...m.sideA, price: update.priceA, probability: update.priceA, odds: update.priceA > 0 ? 1 / update.priceA : null },
+        sideB: { ...m.sideB, price: update.priceB, probability: update.priceB, odds: update.priceB > 0 ? 1 / update.priceB : null },
+        lastUpdated: update.timestamp,
+        lastPriceUpdatedAt: update.timestamp,
+      };
+    }));
+    setLastPriceUpdate(new Date());
+  }, []);
+
+  // Start batch flush interval
+  useEffect(() => {
+    batchFlushIntervalRef.current = setInterval(flushPendingPriceUpdates, 500);
+    return () => {
+      if (batchFlushIntervalRef.current) {
+        clearInterval(batchFlushIntervalRef.current);
+      }
+    };
+  }, [flushPendingPriceUpdates]);
 
   // Make a rate-limited API request with retry logic
   const rateLimitedFetch = async (
@@ -748,7 +786,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const priceCursorRef = useRef(0);
   const lastQpsLogAtRef = useRef(0);
 
-  // Fire a single price fetch - non-blocking, caller is responsible for pacing
+  // Fire a single price fetch - non-blocking, queues to batch instead of immediate state update
   const firePriceFetch = useCallback((market: UnifiedMarket, apiKey: string) => {
     const tokenId = market.sideA.tokenId!;
     
@@ -761,18 +799,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       if (typeof result.price === 'number') {
         const priceA = result.price;
         const priceB = 1 - priceA;
-        const now = new Date();
-        setMarkets(prev => prev.map(m => {
-          if (m.id !== market.id) return m;
-          return {
-            ...m,
-            sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
-            sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
-            lastUpdated: now,
-            lastPriceUpdatedAt: now,
-          };
-        }));
-        setLastPriceUpdate(new Date());
+        // Queue update instead of immediate state change
+        pendingPriceUpdates.current.set(market.id, {
+          priceA,
+          priceB,
+          timestamp: new Date(),
+        });
       }
     });
   }, []);
@@ -914,10 +946,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [stopSteadyPriceLoop]);
 
-  // Live RPM counter - update every second
+  // Live RPM counter - update every second, only when value changes
   useEffect(() => {
     rpmIntervalRef.current = setInterval(() => {
-      setLiveRpm(globalRateLimiter.getRequestsPerMinute());
+      setLiveRpm(prev => {
+        const newRpm = globalRateLimiter.getRequestsPerMinute();
+        return prev === newRpm ? prev : newRpm;
+      });
     }, 1000);
     return () => {
       if (rpmIntervalRef.current) {
