@@ -8,7 +8,7 @@ export type DomeTier = 'free' | 'dev' | 'enterprise';
 // API uses 10-second sliding window, so we target 80% of limit for safety
 export const TIER_LIMITS: Record<DomeTier, { qps: number; qp10s: number; subscriptions: number; walletsPerSub: number }> = {
   free: { qps: 1, qp10s: 8, subscriptions: 2, walletsPerSub: 5 },
-  dev: { qps: 4, qp10s: 40, subscriptions: 500, walletsPerSub: 500 },  // API limit is 50/10s, we use 40 for safety
+  dev: { qps: 99, qp10s: 990, subscriptions: 500, walletsPerSub: 500 },
   enterprise: { qps: 80, qp10s: 800, subscriptions: 10000, walletsPerSub: 10000 },
 };
 
