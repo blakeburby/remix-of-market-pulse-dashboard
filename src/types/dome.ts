@@ -105,6 +105,7 @@ export interface UnifiedMarket {
   volume?: number;
   volume24h?: number;
   lastUpdated: Date;
+  lastPriceUpdatedAt?: Date; // Timestamp when price was last fetched from API
 }
 
 // Grouped Event Type for UI
