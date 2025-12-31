@@ -29,11 +29,14 @@ interface MarketsContextType {
   isPriceUpdating: boolean;
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   wsSubscriptionCount: number;
+  isRefreshingKalshi: boolean;
+  lastKalshiRefresh: Date | null;
   setFilters: (filters: Partial<MarketFilters>) => void;
   startDiscovery: () => void;
   stopDiscovery: () => void;
   startPriceUpdates: () => void;
   stopPriceUpdates: () => void;
+  refreshKalshiPrices: () => void;
 }
 
 const defaultFilters: MarketFilters = {
@@ -70,6 +73,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [lastPriceUpdate, setLastPriceUpdate] = useState<Date | null>(null);
   const [discoveryProgress, setDiscoveryProgress] = useState<DiscoveryProgress | null>(null);
   const [liveRpm, setLiveRpm] = useState(0);
+  const [isRefreshingKalshi, setIsRefreshingKalshi] = useState(false);
+  const [lastKalshiRefresh, setLastKalshiRefresh] = useState<Date | null>(null);
 
   const discoveryIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rpmIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -946,6 +951,54 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [stopSteadyPriceLoop]);
 
+  // Force refresh Kalshi prices for matched markets
+  const refreshKalshiPrices = useCallback(async () => {
+    if (isRefreshingKalshi) return;
+    
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    
+    setIsRefreshingKalshi(true);
+    
+    try {
+      // Get all Kalshi markets
+      const kalshiMarkets = marketsRef.current.filter(m => m.platform === 'KALSHI');
+      if (kalshiMarkets.length === 0) {
+        setIsRefreshingKalshi(false);
+        return;
+      }
+      
+      // Fetch fresh prices for Kalshi markets (re-fetch from discovery endpoint)
+      const url = 'https://api.domeapi.io/v1/kalshi/markets?status=open&limit=100';
+      const response = await rateLimitedFetch(url, apiKey);
+      const data: KalshiMarketsResponse = await response.json();
+      
+      const now = new Date();
+      const freshKalshiMarkets = data.markets.map(convertKalshiMarket);
+      
+      // Update existing Kalshi markets with fresh prices
+      setMarkets(prev => prev.map(m => {
+        if (m.platform !== 'KALSHI') return m;
+        const fresh = freshKalshiMarkets.find(f => f.id === m.id);
+        if (!fresh) return m;
+        return {
+          ...m,
+          sideA: fresh.sideA,
+          sideB: fresh.sideB,
+          lastUpdated: now,
+          lastPriceUpdatedAt: now,
+        };
+      }));
+      
+      setLastKalshiRefresh(now);
+      console.log(`[Kalshi Refresh] Updated ${freshKalshiMarkets.length} markets`);
+    } catch (error) {
+      console.error('[Kalshi Refresh] Error:', error);
+    } finally {
+      setIsRefreshingKalshi(false);
+    }
+  }, [getApiKey, convertKalshiMarket]);
+
   // Live RPM counter - update every second, only when value changes
   useEffect(() => {
     rpmIntervalRef.current = setInterval(() => {
@@ -1000,11 +1053,14 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       isPriceUpdating,
       wsStatus,
       wsSubscriptionCount,
+      isRefreshingKalshi,
+      lastKalshiRefresh,
       setFilters,
       startDiscovery,
       stopDiscovery,
       startPriceUpdates,
       stopPriceUpdates,
+      refreshKalshiPrices,
     }}>
       {children}
     </MarketsContext.Provider>
@@ -1048,10 +1104,13 @@ export function useMarkets(): MarketsContextType {
     isPriceUpdating: false,
     wsStatus: 'disconnected',
     wsSubscriptionCount: 0,
+    isRefreshingKalshi: false,
+    lastKalshiRefresh: null,
     setFilters: () => undefined,
     startDiscovery: () => undefined,
     stopDiscovery: () => undefined,
     startPriceUpdates: () => undefined,
     stopPriceUpdates: () => undefined,
+    refreshKalshiPrices: () => undefined,
   };
 }

@@ -2,19 +2,21 @@ import { useMemo } from 'react';
 import { useMarkets } from '@/contexts/MarketsContext';
 import { findMatchingMarkets, findArbitrageOpportunities } from '@/lib/arbitrage-matcher';
 import { CrossPlatformMatch, ArbitrageOpportunity, UnifiedMarket } from '@/types/dome';
-
-// Freshness configuration
-const FRESHNESS_MAX_AGE_SECONDS = 30 * 60; // 30 minutes - max age for a price to be considered fresh
-const FRESHNESS_MAX_SKEW_SECONDS = 30 * 60; // 30 minutes - max time difference between the two platforms
+import { useArbitrageSettings } from './useArbitrageSettings';
 
 export interface UseArbitrageResult {
   opportunities: ArbitrageOpportunity[];
   freshOpportunities: ArbitrageOpportunity[];
   staleCount: number; // Number of opportunities filtered out due to staleness
+  lowProfitCount: number; // Number filtered out due to low profit
   matches: CrossPlatformMatch[];
+  freshMatches: CrossPlatformMatch[]; // Matches with fresh prices
+  staleMatches: CrossPlatformMatch[]; // Matches with stale prices
   isLoading: boolean;
   polymarketCount: number;
   kalshiCount: number;
+  settings: ReturnType<typeof useArbitrageSettings>['settings'];
+  updateSettings: ReturnType<typeof useArbitrageSettings>['updateSettings'];
 }
 
 /**
@@ -59,41 +61,57 @@ function areSynchronized(
 }
 
 /**
+ * Check if a match has fresh, synchronized price data
+ */
+function isMatchFresh(
+  match: CrossPlatformMatch,
+  now: number,
+  maxAgeSeconds: number,
+  maxSkewSeconds: number
+): boolean {
+  const { polymarket, kalshi } = match;
+  
+  if (!hasValidPrices(polymarket) || !hasValidPrices(kalshi)) {
+    return false;
+  }
+  if (!isFresh(polymarket, now, maxAgeSeconds) || !isFresh(kalshi, now, maxAgeSeconds)) {
+    return false;
+  }
+  if (!areSynchronized(polymarket, kalshi, maxSkewSeconds)) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Filter opportunities to only include those with fresh, synchronized price data
  */
 function filterFreshOpportunities(
   opportunities: ArbitrageOpportunity[],
-  maxAgeSeconds: number = FRESHNESS_MAX_AGE_SECONDS,
-  maxSkewSeconds: number = FRESHNESS_MAX_SKEW_SECONDS
+  maxAgeSeconds: number,
+  maxSkewSeconds: number
 ): ArbitrageOpportunity[] {
   const now = Date.now();
+  return opportunities.filter((opp) => isMatchFresh(opp.match, now, maxAgeSeconds, maxSkewSeconds));
+}
 
-  return opportunities.filter((opp) => {
-    const { polymarket, kalshi } = opp.match;
-
-    // Both must have valid prices
-    if (!hasValidPrices(polymarket) || !hasValidPrices(kalshi)) {
-      return false;
-    }
-
-    // Both must be fresh
-    if (!isFresh(polymarket, now, maxAgeSeconds) || !isFresh(kalshi, now, maxAgeSeconds)) {
-      return false;
-    }
-
-    // Both must be synchronized (updated close in time)
-    if (!areSynchronized(polymarket, kalshi, maxSkewSeconds)) {
-      return false;
-    }
-
-    return true;
-  });
+/**
+ * Filter opportunities by minimum profit threshold
+ */
+function filterByProfitThreshold(
+  opportunities: ArbitrageOpportunity[],
+  minProfitPercent: number
+): ArbitrageOpportunity[] {
+  return opportunities.filter(opp => opp.profitPercent >= minProfitPercent);
 }
 
 export function useArbitrage(): UseArbitrageResult {
   const { markets, isDiscovering, isPriceUpdating } = useMarkets();
+  const { settings, updateSettings } = useArbitrageSettings();
   
   const result = useMemo(() => {
+    const now = Date.now();
+    
     // Split markets by platform
     const polymarkets = markets.filter(m => m.platform === 'POLYMARKET');
     const kalshiMarkets = markets.filter(m => m.platform === 'KALSHI');
@@ -101,24 +119,45 @@ export function useArbitrage(): UseArbitrageResult {
     // Find matching markets
     const matches = findMatchingMarkets(polymarkets, kalshiMarkets);
     
+    // Separate fresh and stale matches
+    const freshMatches = matches.filter(m => 
+      isMatchFresh(m, now, settings.maxAgeSeconds, settings.maxSkewSeconds)
+    );
+    const staleMatches = matches.filter(m => 
+      !isMatchFresh(m, now, settings.maxAgeSeconds, settings.maxSkewSeconds)
+    );
+    
     // Find all arbitrage opportunities (unfiltered)
     const opportunities = findArbitrageOpportunities(matches);
     
     // Filter to only fresh opportunities
-    const freshOpportunities = filterFreshOpportunities(opportunities);
+    const freshByTime = filterFreshOpportunities(
+      opportunities,
+      settings.maxAgeSeconds,
+      settings.maxSkewSeconds
+    );
+    
+    // Filter by profit threshold
+    const freshOpportunities = filterByProfitThreshold(freshByTime, settings.minProfitPercent);
+    const lowProfitCount = freshByTime.length - freshOpportunities.length;
     
     return {
       opportunities,
       freshOpportunities,
-      staleCount: opportunities.length - freshOpportunities.length,
+      staleCount: opportunities.length - freshByTime.length,
+      lowProfitCount,
       matches,
+      freshMatches,
+      staleMatches,
       polymarketCount: polymarkets.length,
       kalshiCount: kalshiMarkets.length
     };
-  }, [markets]);
+  }, [markets, settings]);
   
   return {
     ...result,
-    isLoading: isDiscovering || isPriceUpdating
+    isLoading: isDiscovering || isPriceUpdating,
+    settings,
+    updateSettings,
   };
 }
