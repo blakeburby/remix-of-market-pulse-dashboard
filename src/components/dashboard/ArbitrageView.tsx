@@ -1,14 +1,63 @@
 import { useArbitrage } from '@/hooks/useArbitrage';
+import { useMarkets } from '@/contexts/MarketsContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArbitrageOpportunity } from '@/types/dome';
+import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, Percent, RefreshCw } from 'lucide-react';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, Percent, RefreshCw, Zap, Timer } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
-function ArbitrageCard({ opportunity }: { opportunity: ArbitrageOpportunity }) {
+// Helper to format age in human-readable format
+function formatAge(date: Date | undefined | null): string {
+  if (!date) return 'never';
+  const ageMs = Date.now() - date.getTime();
+  const seconds = Math.floor(ageMs / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+// Helper to get freshness color class
+function getFreshnessColor(date: Date | undefined | null, maxAgeSeconds: number): string {
+  if (!date) return 'text-destructive';
+  const ageSeconds = (Date.now() - date.getTime()) / 1000;
+  if (ageSeconds <= maxAgeSeconds * 0.5) return 'text-green-600';
+  if (ageSeconds <= maxAgeSeconds) return 'text-amber-600';
+  return 'text-destructive';
+}
+
+// Freshness badge component
+function FreshnessBadge({ 
+  polymarket, 
+  kalshi, 
+  maxAgeSeconds 
+}: { 
+  polymarket: Date | undefined | null; 
+  kalshi: Date | undefined | null;
+  maxAgeSeconds: number;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[10px] sm:text-xs">
+      <div className="flex items-center gap-1">
+        <Timer className="w-3 h-3 text-muted-foreground" />
+        <span className={getFreshnessColor(polymarket, maxAgeSeconds)}>
+          Poly: {formatAge(polymarket)}
+        </span>
+        <span className="text-muted-foreground">|</span>
+        <span className={getFreshnessColor(kalshi, maxAgeSeconds)}>
+          Kalshi: {formatAge(kalshi)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
+function ArbitrageCard({ opportunity, maxAgeSeconds }: { opportunity: ArbitrageOpportunity; maxAgeSeconds: number }) {
   const { match, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate } = opportunity;
   
   const polymarketUrl = match.polymarket.marketSlug 
@@ -35,6 +84,12 @@ function ArbitrageCard({ opportunity }: { opportunity: ArbitrageOpportunity }) {
         <CardTitle className="text-base sm:text-lg leading-tight mt-2">
           {match.polymarket.title}
         </CardTitle>
+        {/* Freshness Badge */}
+        <FreshnessBadge 
+          polymarket={match.polymarket.lastPriceUpdatedAt} 
+          kalshi={match.kalshi.lastPriceUpdatedAt}
+          maxAgeSeconds={maxAgeSeconds}
+        />
       </CardHeader>
       
       <CardContent className="space-y-4">
@@ -101,7 +156,7 @@ function ArbitrageCard({ opportunity }: { opportunity: ArbitrageOpportunity }) {
   );
 }
 
-function MatchCard({ match }: { match: { polymarket: any; kalshi: any; matchScore: number; matchReason: string } }) {
+function MatchCard({ match, maxAgeSeconds }: { match: CrossPlatformMatch; maxAgeSeconds: number }) {
   const polyYes = match.polymarket.sideA.probability;
   const polyNo = match.polymarket.sideB.probability;
   const kalshiYes = match.kalshi.sideA.probability;
@@ -121,6 +176,15 @@ function MatchCard({ match }: { match: { polymarket: any; kalshi: any; matchScor
           <Badge variant="secondary" className="shrink-0">
             {Math.round(match.matchScore * 100)}%
           </Badge>
+        </div>
+        
+        {/* Freshness Badge */}
+        <div className="mb-3">
+          <FreshnessBadge 
+            polymarket={match.polymarket.lastPriceUpdatedAt} 
+            kalshi={match.kalshi.lastPriceUpdatedAt}
+            maxAgeSeconds={maxAgeSeconds}
+          />
         </div>
         
         <div className="grid grid-cols-2 gap-4 text-xs">
@@ -150,7 +214,20 @@ function MatchCard({ match }: { match: { polymarket: any; kalshi: any; matchScor
 }
 
 export function ArbitrageView() {
-  const { freshOpportunities, staleCount, matches, isLoading, polymarketCount, kalshiCount } = useArbitrage();
+  const { 
+    freshOpportunities, 
+    staleCount, 
+    lowProfitCount,
+    matches, 
+    freshMatches,
+    staleMatches,
+    isLoading, 
+    polymarketCount, 
+    kalshiCount,
+    settings,
+  } = useArbitrage();
+  
+  const { refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh } = useMarkets();
   
   if (isLoading && matches.length === 0) {
     return (
@@ -171,19 +248,42 @@ export function ArbitrageView() {
   return (
     <div className="space-y-6">
       {/* Stats Bar */}
-      <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-        <span>Polymarket: <strong className="text-foreground">{polymarketCount}</strong> markets</span>
-        <span>Kalshi: <strong className="text-foreground">{kalshiCount}</strong> markets</span>
-        <span>Matched: <strong className="text-foreground">{matches.length}</strong> pairs</span>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+        <span>Polymarket: <strong className="text-foreground">{polymarketCount}</strong></span>
+        <span>Kalshi: <strong className="text-foreground">{kalshiCount}</strong></span>
+        <span>Matched: <strong className="text-foreground">{matches.length}</strong> (<span className="text-green-600">{freshMatches.length} fresh</span>)</span>
         <span className={freshOpportunities.length > 0 ? 'text-green-600' : ''}>
-          Arbitrage: <strong>{freshOpportunities.length}</strong> {freshOpportunities.length === 1 ? 'opportunity' : 'opportunities'}
+          Arbitrage: <strong>{freshOpportunities.length}</strong>
         </span>
         {staleCount > 0 && (
           <span className="text-muted-foreground/60 flex items-center gap-1">
-            <RefreshCw className="w-3 h-3" />
-            {staleCount} awaiting fresh prices
+            <Clock className="w-3 h-3" />
+            {staleCount} stale
           </span>
         )}
+        {lowProfitCount > 0 && (
+          <span className="text-muted-foreground/60 flex items-center gap-1">
+            <Percent className="w-3 h-3" />
+            {lowProfitCount} below {settings.minProfitPercent}%
+          </span>
+        )}
+        
+        {/* Force Refresh Button */}
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={refreshKalshiPrices}
+          disabled={isRefreshingKalshi}
+          className="ml-auto"
+        >
+          <Zap className={`w-3 h-3 mr-1 ${isRefreshingKalshi ? 'animate-pulse' : ''}`} />
+          Refresh Kalshi
+          {lastKalshiRefresh && (
+            <span className="text-muted-foreground ml-1">
+              ({formatAge(lastKalshiRefresh)})
+            </span>
+          )}
+        </Button>
       </div>
       
       {/* Arbitrage Opportunities */}
@@ -195,7 +295,7 @@ export function ArbitrageView() {
           </h3>
           <div className="grid gap-4">
             {freshOpportunities.map(opp => (
-              <ArbitrageCard key={opp.id} opportunity={opp} />
+              <ArbitrageCard key={opp.id} opportunity={opp} maxAgeSeconds={settings.maxAgeSeconds} />
             ))}
           </div>
         </div>
@@ -203,10 +303,20 @@ export function ArbitrageView() {
         <Card className="border-dashed border-chart-4/30 bg-chart-4/5">
           <CardContent className="py-8 text-center">
             <RefreshCw className="w-12 h-12 mx-auto text-chart-4 mb-4 animate-spin" style={{ animationDuration: '3s' }} />
-            <h3 className="text-lg font-semibold mb-2">Waiting for Both Markets to Update…</h3>
+            <h3 className="text-lg font-semibold mb-2">Waiting for Fresh Prices…</h3>
             <p className="text-muted-foreground text-sm max-w-md mx-auto">
-              Found {staleCount} potential {staleCount === 1 ? 'opportunity' : 'opportunities'}, but prices need to be refreshed on both platforms within 30 seconds of each other for reliable arbitrage detection.
+              Found {staleCount} potential {staleCount === 1 ? 'opportunity' : 'opportunities'}, but prices need to be refreshed on both platforms within {settings.maxSkewSeconds}s of each other.
             </p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={refreshKalshiPrices}
+              disabled={isRefreshingKalshi}
+              className="mt-4"
+            >
+              <Zap className={`w-3 h-3 mr-1 ${isRefreshingKalshi ? 'animate-pulse' : ''}`} />
+              Force Kalshi Refresh
+            </Button>
           </CardContent>
         </Card>
       ) : (
@@ -233,7 +343,7 @@ export function ArbitrageView() {
           </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {matches.map((match, i) => (
-              <MatchCard key={i} match={match} />
+              <MatchCard key={i} match={match} maxAgeSeconds={settings.maxAgeSeconds} />
             ))}
           </div>
         </div>
