@@ -4,8 +4,8 @@ import { findMatchingMarkets, findArbitrageOpportunities } from '@/lib/arbitrage
 import { CrossPlatformMatch, ArbitrageOpportunity, UnifiedMarket } from '@/types/dome';
 
 // Freshness configuration
-const FRESHNESS_MAX_AGE_SECONDS = 30; // Max age for a price to be considered fresh
-const FRESHNESS_MAX_SKEW_SECONDS = 15; // Max time difference between the two platforms
+const FRESHNESS_MAX_AGE_SECONDS = 30 * 60; // 30 minutes - max age for a price to be considered fresh
+const FRESHNESS_MAX_SKEW_SECONDS = 30 * 60; // 30 minutes - max time difference between the two platforms
 
 export interface UseArbitrageResult {
   opportunities: ArbitrageOpportunity[];
