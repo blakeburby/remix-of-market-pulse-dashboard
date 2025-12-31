@@ -94,6 +94,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // WebSocket price update handler
   const handleWsPriceUpdate = useCallback((tokenId: string, price: number, timestamp: number) => {
+    const priceUpdatedAt = new Date(timestamp * 1000);
     setMarkets(prev => prev.map(market => {
       if (market.sideA.tokenId === tokenId) {
         return {
@@ -110,7 +111,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
             probability: 1 - price,
             odds: (1 - price) > 0 ? 1 / (1 - price) : null,
           },
-          lastUpdated: new Date(timestamp * 1000),
+          lastUpdated: priceUpdatedAt,
+          lastPriceUpdatedAt: priceUpdatedAt,
         };
       }
       if (market.sideB.tokenId === tokenId) {
@@ -128,7 +130,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
             probability: price,
             odds: price > 0 ? 1 / price : null,
           },
-          lastUpdated: new Date(timestamp * 1000),
+          lastUpdated: priceUpdatedAt,
+          lastPriceUpdatedAt: priceUpdatedAt,
         };
       }
       return market;
@@ -344,9 +347,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Convert Kalshi market to unified format
+  // Kalshi prices come directly from the API discovery, so they're fresh
   const convertKalshiMarket = (market: KalshiMarket): UnifiedMarket => {
     const yesProb = market.last_price / 100;
     const noProb = 1 - yesProb;
+    const now = new Date();
 
     return {
       id: `kalshi_${market.market_ticker}`,
@@ -374,7 +379,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       },
       volume: market.volume,
       volume24h: market.volume_24h,
-      lastUpdated: new Date(),
+      lastUpdated: now,
+      lastPriceUpdatedAt: now, // Kalshi prices come from discovery, mark as fresh
     };
   };
 
@@ -458,11 +464,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         const priceA = snapshot.get(m.id);
         if (priceA === undefined) return m;
         const priceB = 1 - priceA;
+        const now = new Date();
         return {
           ...m,
           sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
           sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
-          lastUpdated: new Date(),
+          lastUpdated: now,
+          lastPriceUpdatedAt: now,
         };
       }));
       setLastPriceUpdate(new Date());
@@ -753,13 +761,15 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       if (typeof result.price === 'number') {
         const priceA = result.price;
         const priceB = 1 - priceA;
+        const now = new Date();
         setMarkets(prev => prev.map(m => {
           if (m.id !== market.id) return m;
           return {
             ...m,
             sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
             sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
-            lastUpdated: new Date(),
+            lastUpdated: now,
+            lastPriceUpdatedAt: now,
           };
         }));
         setLastPriceUpdate(new Date());

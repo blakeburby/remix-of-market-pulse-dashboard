@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ArbitrageOpportunity } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, Percent } from 'lucide-react';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, Percent, RefreshCw } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 function ArbitrageCard({ opportunity }: { opportunity: ArbitrageOpportunity }) {
@@ -150,7 +150,7 @@ function MatchCard({ match }: { match: { polymarket: any; kalshi: any; matchScor
 }
 
 export function ArbitrageView() {
-  const { opportunities, matches, isLoading, polymarketCount, kalshiCount } = useArbitrage();
+  const { freshOpportunities, staleCount, matches, isLoading, polymarketCount, kalshiCount } = useArbitrage();
   
   if (isLoading && matches.length === 0) {
     return (
@@ -175,24 +175,40 @@ export function ArbitrageView() {
         <span>Polymarket: <strong className="text-foreground">{polymarketCount}</strong> markets</span>
         <span>Kalshi: <strong className="text-foreground">{kalshiCount}</strong> markets</span>
         <span>Matched: <strong className="text-foreground">{matches.length}</strong> pairs</span>
-        <span className={opportunities.length > 0 ? 'text-green-600' : ''}>
-          Arbitrage: <strong>{opportunities.length}</strong> {opportunities.length === 1 ? 'opportunity' : 'opportunities'}
+        <span className={freshOpportunities.length > 0 ? 'text-green-600' : ''}>
+          Arbitrage: <strong>{freshOpportunities.length}</strong> {freshOpportunities.length === 1 ? 'opportunity' : 'opportunities'}
         </span>
+        {staleCount > 0 && (
+          <span className="text-muted-foreground/60 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3" />
+            {staleCount} awaiting fresh prices
+          </span>
+        )}
       </div>
       
       {/* Arbitrage Opportunities */}
-      {opportunities.length > 0 ? (
+      {freshOpportunities.length > 0 ? (
         <div className="space-y-4">
           <h3 className="text-lg font-semibold flex items-center gap-2">
             <TrendingUp className="w-5 h-5 text-green-600" />
             Active Arbitrage Opportunities
           </h3>
           <div className="grid gap-4">
-            {opportunities.map(opp => (
+            {freshOpportunities.map(opp => (
               <ArbitrageCard key={opp.id} opportunity={opp} />
             ))}
           </div>
         </div>
+      ) : staleCount > 0 ? (
+        <Card className="border-dashed border-chart-4/30 bg-chart-4/5">
+          <CardContent className="py-8 text-center">
+            <RefreshCw className="w-12 h-12 mx-auto text-chart-4 mb-4 animate-spin" style={{ animationDuration: '3s' }} />
+            <h3 className="text-lg font-semibold mb-2">Waiting for Both Markets to Update…</h3>
+            <p className="text-muted-foreground text-sm max-w-md mx-auto">
+              Found {staleCount} potential {staleCount === 1 ? 'opportunity' : 'opportunities'}, but prices need to be refreshed on both platforms within 30 seconds of each other for reliable arbitrage detection.
+            </p>
+          </CardContent>
+        </Card>
       ) : (
         <Card className="border-dashed">
           <CardContent className="py-8 text-center">
