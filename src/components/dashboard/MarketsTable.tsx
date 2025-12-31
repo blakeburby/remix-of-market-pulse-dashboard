@@ -1,17 +1,24 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useMarkets } from '@/contexts/MarketsContext';
 import { UnifiedMarket } from '@/types/dome';
 import { formatDistanceToNow } from 'date-fns';
 import { ChevronUp, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 
+const ROW_HEIGHT_DESKTOP = 72;
+const ROW_HEIGHT_MOBILE = 80;
+
 export function MarketsTable() {
   const { filteredMarkets, isDiscovering, isPriceUpdating } = useMarkets();
   const [selectedMarket, setSelectedMarket] = useState<UnifiedMarket | null>(null);
+  
+  // Refs for virtualization containers
+  const desktopParentRef = useRef<HTMLDivElement>(null);
+  const mobileParentRef = useRef<HTMLDivElement>(null);
 
   const formatProbability = (prob: number) => `${(prob * 100).toFixed(0)}%`;
   const formatOdds = (odds: number | null) => odds ? odds.toFixed(2) : '—';
@@ -37,12 +44,28 @@ export function MarketsTable() {
     }
   };
 
-  const getPlatformBadge = (platform: string, compact = false) => {
+  const getPlatformBadge = useCallback((platform: string, compact = false) => {
     if (platform === 'POLYMARKET') {
       return <Badge variant="secondary" className={`bg-chart-1/10 text-chart-1 border-0 font-medium ${compact ? 'text-[10px] px-1.5 py-0' : ''}`}>{compact ? 'P' : 'Polymarket'}</Badge>;
     }
     return <Badge variant="secondary" className={`bg-chart-4/10 text-chart-4 border-0 font-medium ${compact ? 'text-[10px] px-1.5 py-0' : ''}`}>{compact ? 'K' : 'Kalshi'}</Badge>;
-  };
+  }, []);
+
+  // Desktop virtualizer
+  const desktopVirtualizer = useVirtualizer({
+    count: filteredMarkets.length,
+    getScrollElement: () => desktopParentRef.current,
+    estimateSize: () => ROW_HEIGHT_DESKTOP,
+    overscan: 10,
+  });
+
+  // Mobile virtualizer
+  const mobileVirtualizer = useVirtualizer({
+    count: filteredMarkets.length,
+    getScrollElement: () => mobileParentRef.current,
+    estimateSize: () => ROW_HEIGHT_MOBILE,
+    overscan: 5,
+  });
 
   if (filteredMarkets.length === 0) {
     return (
@@ -64,132 +87,180 @@ export function MarketsTable() {
   return (
     <>
       <Card className="border-border shadow-sm overflow-hidden">
-        {/* Mobile Card View */}
+        {/* Mobile Card View - Virtualized */}
         <div className="sm:hidden">
-          <ScrollArea className="h-[calc(100vh-380px)] min-h-[300px]">
-            <div className="divide-y divide-border">
-              {filteredMarkets.map((market) => (
-                <div
-                  key={market.id}
-                  className="p-3 active:bg-muted/50 cursor-pointer transition-colors"
-                  onClick={() => setSelectedMarket(market)}
-                >
-                  <div className="flex items-start gap-2 mb-2">
-                    {getPlatformBadge(market.platform, true)}
-                    <p className="font-medium text-foreground text-sm leading-tight flex-1 line-clamp-2">
-                      {market.title}
-                    </p>
-                  </div>
-                  
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-1">
-                        <ChevronUp className="w-3 h-3 text-chart-4" />
-                        <span className="font-mono text-xs font-medium">{(market.sideA.price * 100).toFixed(0)}¢</span>
+          <div
+            ref={mobileParentRef}
+            className="h-[calc(100vh-380px)] min-h-[300px] overflow-auto"
+          >
+            <div
+              style={{
+                height: `${mobileVirtualizer.getTotalSize()}px`,
+                width: '100%',
+                position: 'relative',
+              }}
+            >
+              {mobileVirtualizer.getVirtualItems().map((virtualRow) => {
+                const market = filteredMarkets[virtualRow.index];
+                return (
+                  <div
+                    key={market.id}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      height: `${virtualRow.size}px`,
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    <div
+                      className="p-3 active:bg-muted/50 cursor-pointer transition-colors border-b border-border h-full"
+                      onClick={() => setSelectedMarket(market)}
+                    >
+                      <div className="flex items-start gap-2 mb-2">
+                        {getPlatformBadge(market.platform, true)}
+                        <p className="font-medium text-foreground text-sm leading-tight flex-1 line-clamp-2">
+                          {market.title}
+                        </p>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <ChevronDown className="w-3 h-3 text-chart-5" />
-                        <span className="font-mono text-xs font-medium">{(market.sideB.price * 100).toFixed(0)}¢</span>
+                      
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1">
+                            <ChevronUp className="w-3 h-3 text-chart-4" />
+                            <span className="font-mono text-xs font-medium">{(market.sideA.price * 100).toFixed(0)}¢</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <ChevronDown className="w-3 h-3 text-chart-5" />
+                            <span className="font-mono text-xs font-medium">{(market.sideB.price * 100).toFixed(0)}¢</span>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                          <span>{formatShortDate(market.endTime)}</span>
+                          <div className="w-12 h-1 bg-chart-5/20 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-chart-4 rounded-full"
+                              style={{ width: `${market.sideA.probability * 100}%` }}
+                            />
+                          </div>
+                          <span className="font-medium text-chart-4">{formatProbability(market.sideA.probability)}</span>
+                        </div>
                       </div>
                     </div>
-                    
-                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                      <span>{formatShortDate(market.endTime)}</span>
-                      <div className="w-12 h-1 bg-chart-5/20 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-chart-4 rounded-full"
-                          style={{ width: `${market.sideA.probability * 100}%` }}
-                        />
-                      </div>
-                      <span className="font-medium text-chart-4">{formatProbability(market.sideA.probability)}</span>
-                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
-          </ScrollArea>
+          </div>
         </div>
 
-        {/* Desktop Table View */}
+        {/* Desktop Table View - Virtualized */}
         <div className="hidden sm:block">
-          <ScrollArea className="h-[600px]">
-            <div className="min-w-[900px]">
-              {/* Header */}
-              <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide sticky top-0 z-10">
-                <div className="col-span-1">Platform</div>
-                <div className="col-span-4">Market</div>
-                <div className="col-span-2">Expiration</div>
-                <div className="col-span-2 text-center">Price</div>
-                <div className="col-span-2 text-center">Probability</div>
-                <div className="col-span-1 text-right">Updated</div>
-              </div>
-
-              {/* Rows */}
-              {filteredMarkets.map((market) => (
-                <div
-                  key={market.id}
-                  className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-border hover:bg-muted/30 cursor-pointer transition-colors"
-                  onClick={() => setSelectedMarket(market)}
-                >
-                  {/* Platform */}
-                  <div className="col-span-1 flex items-center">
-                    {getPlatformBadge(market.platform)}
-                  </div>
-
-                  {/* Title */}
-                  <div className="col-span-4">
-                    <p className="font-medium text-foreground line-clamp-2 text-sm">{market.title}</p>
-                    {market.volume !== undefined && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Vol: ${market.volume.toLocaleString()}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Expiration */}
-                  <div className="col-span-2 flex items-center">
-                    <span className="text-sm text-foreground">{formatDate(market.endTime)}</span>
-                  </div>
-
-                  {/* Prices - show in cents */}
-                  <div className="col-span-2 flex items-center justify-center gap-2">
-                    <div className="flex items-center gap-1 text-sm">
-                      <ChevronUp className="w-4 h-4 text-chart-4" />
-                      <span className="font-mono font-medium">{(market.sideA.price * 100).toFixed(1)}¢</span>
-                    </div>
-                    <span className="text-muted-foreground">/</span>
-                    <div className="flex items-center gap-1 text-sm">
-                      <ChevronDown className="w-4 h-4 text-chart-5" />
-                      <span className="font-mono font-medium">{(market.sideB.price * 100).toFixed(1)}¢</span>
-                    </div>
-                  </div>
-
-                  {/* Probability */}
-                  <div className="col-span-2 flex items-center justify-center">
-                    <div className="w-full max-w-[120px]">
-                      <div className="flex justify-between text-xs mb-1.5">
-                        <span className="font-medium text-chart-4">{formatProbability(market.sideA.probability)}</span>
-                        <span className="font-medium text-chart-5">{formatProbability(market.sideB.probability)}</span>
-                      </div>
-                      <div className="h-1.5 bg-chart-5/20 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-chart-4 rounded-full transition-all duration-500"
-                          style={{ width: `${market.sideA.probability * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Last Updated */}
-                  <div className="col-span-1 flex items-center justify-end">
-                    <span className="text-xs text-muted-foreground">
-                      {formatDate(market.lastUpdated)}
-                    </span>
-                  </div>
-                </div>
-              ))}
+          <div className="min-w-[900px]">
+            {/* Header - sticky */}
+            <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              <div className="col-span-1">Platform</div>
+              <div className="col-span-4">Market</div>
+              <div className="col-span-2">Expiration</div>
+              <div className="col-span-2 text-center">Price</div>
+              <div className="col-span-2 text-center">Probability</div>
+              <div className="col-span-1 text-right">Updated</div>
             </div>
-          </ScrollArea>
+
+            {/* Virtualized Rows */}
+            <div
+              ref={desktopParentRef}
+              className="h-[552px] overflow-auto"
+            >
+              <div
+                style={{
+                  height: `${desktopVirtualizer.getTotalSize()}px`,
+                  width: '100%',
+                  position: 'relative',
+                }}
+              >
+                {desktopVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const market = filteredMarkets[virtualRow.index];
+                  return (
+                    <div
+                      key={market.id}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: `${virtualRow.size}px`,
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                    >
+                      <div
+                        className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-border hover:bg-muted/30 cursor-pointer transition-colors h-full items-center"
+                        onClick={() => setSelectedMarket(market)}
+                      >
+                        {/* Platform */}
+                        <div className="col-span-1 flex items-center">
+                          {getPlatformBadge(market.platform)}
+                        </div>
+
+                        {/* Title */}
+                        <div className="col-span-4">
+                          <p className="font-medium text-foreground line-clamp-2 text-sm">{market.title}</p>
+                          {market.volume !== undefined && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Vol: ${market.volume.toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Expiration */}
+                        <div className="col-span-2 flex items-center">
+                          <span className="text-sm text-foreground">{formatDate(market.endTime)}</span>
+                        </div>
+
+                        {/* Prices - show in cents */}
+                        <div className="col-span-2 flex items-center justify-center gap-2">
+                          <div className="flex items-center gap-1 text-sm">
+                            <ChevronUp className="w-4 h-4 text-chart-4" />
+                            <span className="font-mono font-medium">{(market.sideA.price * 100).toFixed(1)}¢</span>
+                          </div>
+                          <span className="text-muted-foreground">/</span>
+                          <div className="flex items-center gap-1 text-sm">
+                            <ChevronDown className="w-4 h-4 text-chart-5" />
+                            <span className="font-mono font-medium">{(market.sideB.price * 100).toFixed(1)}¢</span>
+                          </div>
+                        </div>
+
+                        {/* Probability */}
+                        <div className="col-span-2 flex items-center justify-center">
+                          <div className="w-full max-w-[120px]">
+                            <div className="flex justify-between text-xs mb-1.5">
+                              <span className="font-medium text-chart-4">{formatProbability(market.sideA.probability)}</span>
+                              <span className="font-medium text-chart-5">{formatProbability(market.sideB.probability)}</span>
+                            </div>
+                            <div className="h-1.5 bg-chart-5/20 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-chart-4 rounded-full transition-all duration-500"
+                                style={{ width: `${market.sideA.probability * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Last Updated */}
+                        <div className="col-span-1 flex items-center justify-end">
+                          <span className="text-xs text-muted-foreground">
+                            {formatDate(market.lastUpdated)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Footer */}
