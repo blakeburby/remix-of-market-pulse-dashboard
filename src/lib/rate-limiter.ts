@@ -5,7 +5,8 @@ import { DomeTier, TIER_LIMITS } from '@/types/dome';
 
 export class RateLimiter {
   private tier: DomeTier;
-  private requestTimestamps: number[] = [];  // Timestamps within sliding window
+  private requestTimestamps: number[] = [];  // Timestamps within 10s sliding window (for rate limiting)
+  private requestTimestamps60s: number[] = [];  // Timestamps within 60s window (for accurate RPM)
   private lastRequestTime: number = 0;
   private rateLimitedUntil: number = 0;  // Pause until this timestamp if 429 received
 
@@ -37,8 +38,10 @@ export class RateLimiter {
 
   private cleanupWindow() {
     const now = Date.now();
-    const windowStart = now - 10000; // 10-second sliding window
-    this.requestTimestamps = this.requestTimestamps.filter(t => t > windowStart);
+    const windowStart10s = now - 10000; // 10-second sliding window
+    const windowStart60s = now - 60000; // 60-second sliding window for RPM
+    this.requestTimestamps = this.requestTimestamps.filter(t => t > windowStart10s);
+    this.requestTimestamps60s = this.requestTimestamps60s.filter(t => t > windowStart60s);
   }
 
   private getRequestsInWindow(): number {
@@ -79,6 +82,7 @@ export class RateLimiter {
     
     this.lastRequestTime = Date.now();
     this.requestTimestamps.push(this.lastRequestTime);
+    this.requestTimestamps60s.push(this.lastRequestTime);
   }
 
   // Stream-based acquisition - fires callback as tokens become available
@@ -110,13 +114,14 @@ export class RateLimiter {
     const now = Date.now();
     this.lastRequestTime = now;
     this.requestTimestamps.push(now);
+    this.requestTimestamps60s.push(now);
     return true;
   }
 
   getRequestsPerMinute(): number {
-    // Extrapolate from 10s window to 1 minute
+    // Actual count from 60-second window
     this.cleanupWindow();
-    return this.requestTimestamps.length * 6;
+    return this.requestTimestamps60s.length;
   }
 
   getAvailableTokens(): number {
@@ -129,6 +134,7 @@ export class RateLimiter {
   trackRequest(): void {
     this.lastRequestTime = Date.now();
     this.requestTimestamps.push(this.lastRequestTime);
+    this.requestTimestamps60s.push(this.lastRequestTime);
     this.cleanupWindow();
   }
 }
