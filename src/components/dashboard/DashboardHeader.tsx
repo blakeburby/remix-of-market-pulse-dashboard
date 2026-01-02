@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Building2, LogOut, BarChart3, Trophy } from 'lucide-react';
+import { Building2, LogOut, BarChart3, Trophy, Calculator } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -13,6 +13,7 @@ export function DashboardHeader({ onLogout }: DashboardHeaderProps) {
   const navItems = [
     { path: '/dashboard', label: 'Markets', icon: BarChart3 },
     { path: '/sports', label: 'Sports', icon: Trophy },
+    { path: '/calculator', label: 'Calculator', icon: Calculator },
   ];
 
   return (
