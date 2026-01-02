@@ -5,12 +5,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ArrowRight, DollarSign, TrendingUp, AlertTriangle } from 'lucide-react';
 
 export default function TradeCalculator() {
   const navigate = useNavigate();
-  const [kalshiYes, setKalshiYes] = useState<string>('45');
-  const [polyYes, setPolyYes] = useState<string>('58');
+  const [kalshiPrice, setKalshiPrice] = useState<string>('45');
+  const [kalshiSide, setKalshiSide] = useState<'YES' | 'NO'>('YES');
+  const [polyPrice, setPolyPrice] = useState<string>('58');
+  const [polySide, setPolySide] = useState<'YES' | 'NO'>('YES');
   const [portfolio, setPortfolio] = useState<string>('100');
 
   const handleLogout = () => {
@@ -18,25 +21,28 @@ export default function TradeCalculator() {
   };
 
   const calculation = useMemo(() => {
-    const kalshiYesPrice = parseFloat(kalshiYes) / 100;
-    const polyYesPrice = parseFloat(polyYes) / 100;
+    const inputKalshi = parseFloat(kalshiPrice) / 100;
+    const inputPoly = parseFloat(polyPrice) / 100;
     const portfolioAmount = parseFloat(portfolio);
 
-    if (isNaN(kalshiYesPrice) || isNaN(polyYesPrice) || isNaN(portfolioAmount)) {
+    if (isNaN(inputKalshi) || isNaN(inputPoly) || isNaN(portfolioAmount)) {
       return null;
     }
 
-    if (kalshiYesPrice <= 0 || kalshiYesPrice >= 1 || polyYesPrice <= 0 || polyYesPrice >= 1) {
+    if (inputKalshi <= 0 || inputKalshi >= 1 || inputPoly <= 0 || inputPoly >= 1) {
       return null;
     }
 
-    const kalshiNo = 1 - kalshiYesPrice;
-    const polyNo = 1 - polyYesPrice;
+    // Convert inputs to YES prices based on selected side
+    const kalshiYesPrice = kalshiSide === 'YES' ? inputKalshi : 1 - inputKalshi;
+    const polyYesPrice = polySide === 'YES' ? inputPoly : 1 - inputPoly;
+    const kalshiNoPrice = 1 - kalshiYesPrice;
+    const polyNoPrice = 1 - polyYesPrice;
 
     // Strategy 1: Buy YES on Kalshi + NO on Polymarket
-    const cost1 = kalshiYesPrice + polyNo;
+    const cost1 = kalshiYesPrice + polyNoPrice;
     // Strategy 2: Buy YES on Polymarket + NO on Kalshi
-    const cost2 = polyYesPrice + kalshiNo;
+    const cost2 = polyYesPrice + kalshiNoPrice;
 
     const bestStrategy = cost1 < cost2 ? 1 : 2;
     const bestCost = Math.min(cost1, cost2);
@@ -49,25 +55,25 @@ export default function TradeCalculator() {
     const totalContracts = portfolioAmount / bestCost;
     
     let kalshiStake: number, polyStake: number;
-    let kalshiSide: 'YES' | 'NO', polySide: 'YES' | 'NO';
-    let kalshiPrice: number, polyPrice: number;
+    let recKalshiSide: 'YES' | 'NO', recPolySide: 'YES' | 'NO';
+    let recKalshiPrice: number, recPolyPrice: number;
 
     if (bestStrategy === 1) {
       // Buy YES on Kalshi, NO on Polymarket
-      kalshiSide = 'YES';
-      polySide = 'NO';
-      kalshiPrice = kalshiYesPrice;
-      polyPrice = polyNo;
+      recKalshiSide = 'YES';
+      recPolySide = 'NO';
+      recKalshiPrice = kalshiYesPrice;
+      recPolyPrice = polyNoPrice;
     } else {
       // Buy YES on Polymarket, NO on Kalshi
-      kalshiSide = 'NO';
-      polySide = 'YES';
-      kalshiPrice = kalshiNo;
-      polyPrice = polyYesPrice;
+      recKalshiSide = 'NO';
+      recPolySide = 'YES';
+      recKalshiPrice = kalshiNoPrice;
+      recPolyPrice = polyYesPrice;
     }
 
-    kalshiStake = totalContracts * kalshiPrice;
-    polyStake = totalContracts * polyPrice;
+    kalshiStake = totalContracts * recKalshiPrice;
+    polyStake = totalContracts * recPolyPrice;
     const guaranteedProfit = totalContracts - portfolioAmount;
 
     return {
@@ -78,14 +84,14 @@ export default function TradeCalculator() {
       totalContracts,
       kalshiStake,
       polyStake,
-      kalshiSide,
-      polySide,
-      kalshiPrice,
-      polyPrice,
+      recKalshiSide,
+      recPolySide,
+      recKalshiPrice,
+      recPolyPrice,
       guaranteedProfit,
       portfolioAmount,
     };
-  }, [kalshiYes, polyYes, portfolio]);
+  }, [kalshiPrice, kalshiSide, polyPrice, polySide, portfolio]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -108,34 +114,58 @@ export default function TradeCalculator() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="kalshi">Kalshi YES Price (¢)</Label>
-                <Input
-                  id="kalshi"
-                  type="number"
-                  min="1"
-                  max="99"
-                  value={kalshiYes}
-                  onChange={(e) => setKalshiYes(e.target.value)}
-                  placeholder="e.g., 45"
-                />
+                <Label>Kalshi Price (¢)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="kalshi"
+                    type="number"
+                    min="1"
+                    max="99"
+                    value={kalshiPrice}
+                    onChange={(e) => setKalshiPrice(e.target.value)}
+                    placeholder="e.g., 45"
+                    className="flex-1"
+                  />
+                  <ToggleGroup
+                    type="single"
+                    value={kalshiSide}
+                    onValueChange={(v) => v && setKalshiSide(v as 'YES' | 'NO')}
+                    className="border rounded-md"
+                  >
+                    <ToggleGroupItem value="YES" className="px-3 text-xs">YES</ToggleGroupItem>
+                    <ToggleGroupItem value="NO" className="px-3 text-xs">NO</ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  NO price: {(100 - parseFloat(kalshiYes || '0')).toFixed(0)}¢
+                  {kalshiSide === 'YES' ? 'NO' : 'YES'} price: {(100 - parseFloat(kalshiPrice || '0')).toFixed(0)}¢
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="poly">Polymarket YES Price (¢)</Label>
-                <Input
-                  id="poly"
-                  type="number"
-                  min="1"
-                  max="99"
-                  value={polyYes}
-                  onChange={(e) => setPolyYes(e.target.value)}
-                  placeholder="e.g., 58"
-                />
+                <Label>Polymarket Price (¢)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="poly"
+                    type="number"
+                    min="1"
+                    max="99"
+                    value={polyPrice}
+                    onChange={(e) => setPolyPrice(e.target.value)}
+                    placeholder="e.g., 58"
+                    className="flex-1"
+                  />
+                  <ToggleGroup
+                    type="single"
+                    value={polySide}
+                    onValueChange={(v) => v && setPolySide(v as 'YES' | 'NO')}
+                    className="border rounded-md"
+                  >
+                    <ToggleGroupItem value="YES" className="px-3 text-xs">YES</ToggleGroupItem>
+                    <ToggleGroupItem value="NO" className="px-3 text-xs">NO</ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  NO price: {(100 - parseFloat(polyYes || '0')).toFixed(0)}¢
+                  {polySide === 'YES' ? 'NO' : 'YES'} price: {(100 - parseFloat(polyPrice || '0')).toFixed(0)}¢
                 </p>
               </div>
 
@@ -195,7 +225,7 @@ export default function TradeCalculator() {
                       <div>
                         <p className="font-medium">Kalshi</p>
                         <p className="text-sm text-muted-foreground">
-                          Buy <Badge variant="outline">{calculation.kalshiSide}</Badge> @ {(calculation.kalshiPrice * 100).toFixed(0)}¢
+                          Buy <Badge variant="outline">{calculation.recKalshiSide}</Badge> @ {(calculation.recKalshiPrice * 100).toFixed(0)}¢
                         </p>
                       </div>
                       <div className="text-right">
@@ -216,7 +246,7 @@ export default function TradeCalculator() {
                       <div>
                         <p className="font-medium">Polymarket</p>
                         <p className="text-sm text-muted-foreground">
-                          Buy <Badge variant="outline">{calculation.polySide}</Badge> @ {(calculation.polyPrice * 100).toFixed(0)}¢
+                          Buy <Badge variant="outline">{calculation.recPolySide}</Badge> @ {(calculation.recPolyPrice * 100).toFixed(0)}¢
                         </p>
                       </div>
                       <div className="text-right">
