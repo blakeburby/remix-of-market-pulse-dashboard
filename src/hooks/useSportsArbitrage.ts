@@ -198,9 +198,39 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       return { price: (typeof rawLast === 'number' && rawLast > 0) ? rawLast : null, bidAsk };
     };
 
+    // Parse orderbook to get best bid/ask
+    const parseOrderbook = (orderbook: any): { price: number | null; bidAsk: BidAskData } => {
+      const yesOrders = orderbook?.yes || [];
+      const noOrders = orderbook?.no || [];
+      
+      // Format is [[price, quantity], ...] - prices are in cents
+      // Best bid = highest price someone is willing to pay
+      // Best ask = lowest price someone is willing to sell at (100 - best NO bid)
+      const yesBid = yesOrders.length > 0 ? Math.max(...yesOrders.map((o: number[]) => o[0])) : null;
+      const noBid = noOrders.length > 0 ? Math.max(...noOrders.map((o: number[]) => o[0])) : null;
+      
+      // Yes ask is derived from the best no bid: if someone bids 30 on NO, they're asking 70 for YES
+      const yesAsk = typeof noBid === 'number' ? 100 - noBid : null;
+      const noAsk = typeof yesBid === 'number' ? 100 - yesBid : null;
+      
+      const spread = (typeof yesBid === 'number' && typeof yesAsk === 'number')
+        ? yesAsk - yesBid
+        : null;
+
+      const bidAsk: BidAskData = { yesBid, yesAsk, noBid, noAsk, spread };
+
+      // Midpoint price
+      const price = (typeof yesBid === 'number' && typeof yesAsk === 'number')
+        ? (yesBid + yesAsk) / 2
+        : yesBid ?? yesAsk ?? null;
+
+      return { price, bidAsk };
+    };
+
+    // Primary: Try /kalshi/markets with market_ticker filter
     const fetchMarketSnapshot = async (): Promise<any | null> => {
       try {
-        const resp = await fetch(`https://api.domeapi.io/v1/kalshi/markets?tickers=${safeTicker}&limit=1`, {
+        const resp = await fetch(`https://api.domeapi.io/v1/kalshi/markets?market_ticker=${safeTicker}&limit=1`, {
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
@@ -209,53 +239,60 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
 
         if (!resp.ok) return null;
         const json = await resp.json();
-        const first = Array.isArray(json?.markets) ? json.markets[0] : null;
-        return first ?? null;
+        const markets = Array.isArray(json?.markets) ? json.markets : [];
+        // Verify the returned market matches our ticker
+        const match = markets.find((m: any) => m.market_ticker === marketTicker);
+        return match ?? null;
+      } catch {
+        return null;
+      }
+    };
+
+    // Secondary: Try /kalshi/orderbooks for real-time bid/ask
+    const fetchOrderbook = async (): Promise<{ price: number | null; bidAsk: BidAskData } | null> => {
+      try {
+        const now = Date.now();
+        const startTime = now - 60000; // Last minute
+        const resp = await fetch(
+          `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startTime}&end_time=${now}&limit=1`,
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        if (!resp.ok) return null;
+        const json = await resp.json();
+        const snapshots = Array.isArray(json?.snapshots) ? json.snapshots : [];
+        if (snapshots.length === 0) return null;
+        
+        // Get the most recent snapshot
+        const latest = snapshots[snapshots.length - 1];
+        return parseOrderbook(latest.orderbook);
       } catch {
         return null;
       }
     };
 
     try {
-      const response = await fetch(`https://api.domeapi.io/v1/kalshi/market-price/${safeTicker}`, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      // Some deployments of the API don't expose /kalshi/market-price; fall back to /kalshi/markets?tickers=
-      if (!response.ok) {
-        if (response.status === 404) {
-          const snapshot = await fetchMarketSnapshot();
-          if (snapshot) {
-            const fromSnapshot = deriveYesPriceCents(snapshot);
-            if (fromSnapshot.price) {
-              return { price: fromSnapshot.price, bidAsk: fromSnapshot.bidAsk };
-            }
-          }
-          return { error: { status: 404, message: 'Market not found' } };
-        }
-
-        return { error: { status: response.status, message: `HTTP ${response.status}` } };
+      // Try orderbook first for real-time bid/ask
+      const orderbookResult = await fetchOrderbook();
+      if (orderbookResult?.price) {
+        return { price: orderbookResult.price, bidAsk: orderbookResult.bidAsk };
       }
 
-      const data = await response.json();
-      let result = deriveYesPriceCents(data);
-
-      // Fallback: markets snapshot when price endpoint returns 0 or missing
-      if (!result.price) {
-        const snapshot = await fetchMarketSnapshot();
-        if (snapshot) {
-          result = deriveYesPriceCents(snapshot);
+      // Fallback to markets endpoint for last_price
+      const snapshot = await fetchMarketSnapshot();
+      if (snapshot) {
+        const result = deriveYesPriceCents(snapshot);
+        if (result.price) {
+          return { price: result.price, bidAsk: result.bidAsk };
         }
       }
 
-      if (!result.price) {
-        return { error: { status: null, message: 'No price / no liquidity' } };
-      }
-
-      return { price: result.price, bidAsk: result.bidAsk };
+      return { error: { status: null, message: 'No price / no liquidity' } };
     } catch (err) {
       return { error: { status: null, message: err instanceof Error ? err.message : 'Network error' } };
     }
