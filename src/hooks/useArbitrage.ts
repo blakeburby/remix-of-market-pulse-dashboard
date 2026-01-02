@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useMarkets } from '@/contexts/MarketsContext';
 import { findMatchingMarkets, findArbitrageOpportunities } from '@/lib/arbitrage-matcher';
 import { CrossPlatformMatch, ArbitrageOpportunity, UnifiedMarket } from '@/types/dome';
@@ -106,7 +106,7 @@ function filterByProfitThreshold(
 }
 
 export function useArbitrage(): UseArbitrageResult {
-  const { markets, isDiscovering, isPriceUpdating } = useMarkets();
+  const { markets, isDiscovering, isPriceUpdating, setMatchedPolymarketIds } = useMarkets();
   const { settings, updateSettings } = useArbitrageSettings();
   
   const result = useMemo(() => {
@@ -118,6 +118,9 @@ export function useArbitrage(): UseArbitrageResult {
     
     // Find matching markets
     const matches = findMatchingMarkets(polymarkets, kalshiMarkets);
+    
+    // Extract matched Polymarket IDs for priority fetching
+    const matchedPolyIds = new Set(matches.map(m => m.polymarket.id));
     
     // Separate fresh and stale matches
     const freshMatches = matches.filter(m => 
@@ -150,12 +153,26 @@ export function useArbitrage(): UseArbitrageResult {
       freshMatches,
       staleMatches,
       polymarketCount: polymarkets.length,
-      kalshiCount: kalshiMarkets.length
+      kalshiCount: kalshiMarkets.length,
+      matchedPolyIds,
     };
   }, [markets, settings]);
   
+  // Update matched Polymarket IDs for priority price fetching
+  useEffect(() => {
+    setMatchedPolymarketIds(result.matchedPolyIds);
+  }, [result.matchedPolyIds, setMatchedPolymarketIds]);
+  
   return {
-    ...result,
+    opportunities: result.opportunities,
+    freshOpportunities: result.freshOpportunities,
+    staleCount: result.staleCount,
+    lowProfitCount: result.lowProfitCount,
+    matches: result.matches,
+    freshMatches: result.freshMatches,
+    staleMatches: result.staleMatches,
+    polymarketCount: result.polymarketCount,
+    kalshiCount: result.kalshiCount,
     isLoading: isDiscovering || isPriceUpdating,
     settings,
     updateSettings,
