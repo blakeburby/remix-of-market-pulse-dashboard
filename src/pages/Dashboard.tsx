@@ -8,11 +8,20 @@ import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { ArbitrageView } from '@/components/dashboard/ArbitrageView';
 import { ArbitrageSettingsPanel } from '@/components/dashboard/ArbitrageSettingsPanel';
 import { Button } from '@/components/ui/button';
-import { Play, Pause } from 'lucide-react';
+import { Play, Pause, RefreshCw } from 'lucide-react';
 
 export default function DashboardPage() {
   const { isAuthenticated, logout } = useAuth();
-  const { summary, syncState, isPriceUpdating, startPriceUpdates, stopPriceUpdates } = useMarkets();
+  const { 
+    summary, 
+    syncState, 
+    isDiscovering,
+    isPriceUpdating, 
+    startDiscovery,
+    stopDiscovery,
+    startPriceUpdates, 
+    stopPriceUpdates 
+  } = useMarkets();
   const { settings, updateSettings, resetSettings, defaults } = useArbitrageSettings();
   const navigate = useNavigate();
 
@@ -25,6 +34,18 @@ export default function DashboardPage() {
   if (!isAuthenticated) {
     return null;
   }
+
+  const handleStartAll = () => {
+    startDiscovery();
+    setTimeout(() => startPriceUpdates(), 3000);
+  };
+
+  const handleStopAll = () => {
+    stopDiscovery();
+    stopPriceUpdates();
+  };
+
+  const isRunning = isDiscovering || isPriceUpdating;
 
   return (
     <div className="min-h-screen bg-background">
@@ -40,11 +61,11 @@ export default function DashboardPage() {
             defaults={defaults}
           />
           <Button
-            variant={isPriceUpdating ? "destructive" : "default"}
+            variant={isRunning ? "destructive" : "default"}
             size="sm"
-            onClick={isPriceUpdating ? stopPriceUpdates : startPriceUpdates}
+            onClick={isRunning ? handleStopAll : handleStartAll}
           >
-            {isPriceUpdating ? (
+            {isRunning ? (
               <>
                 <Pause className="w-4 h-4 mr-2" />
                 Stop Fetching
