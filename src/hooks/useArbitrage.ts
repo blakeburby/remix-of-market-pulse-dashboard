@@ -12,6 +12,8 @@ export interface UseArbitrageResult {
   matches: CrossPlatformMatch[];
   freshMatches: CrossPlatformMatch[]; // Matches with fresh prices
   staleMatches: CrossPlatformMatch[]; // Matches with stale prices
+  matchesWithValidPrices: number; // Matches where both platforms have real prices
+  matchesAwaitingPrices: number; // Matches missing prices
   isLoading: boolean;
   polymarketCount: number;
   kalshiCount: number;
@@ -122,6 +124,15 @@ export function useArbitrage(): UseArbitrageResult {
     // Extract matched Polymarket IDs for priority fetching
     const matchedPolyIds = new Set(matches.map(m => m.polymarket.id));
     
+    // Count matches with valid prices (not default/zero)
+    const matchesWithValidPrices = matches.filter(m => {
+      const polyHasRealPrice = m.polymarket.lastPriceUpdatedAt !== undefined;
+      const kalshiYes = m.kalshi.sideA.probability;
+      const kalshiHasRealPrice = kalshiYes > 0 && kalshiYes < 1;
+      return polyHasRealPrice && kalshiHasRealPrice;
+    }).length;
+    const matchesAwaitingPrices = matches.length - matchesWithValidPrices;
+    
     // Separate fresh and stale matches
     const freshMatches = matches.filter(m => 
       isMatchFresh(m, now, settings.maxAgeSeconds, settings.maxSkewSeconds)
@@ -152,6 +163,8 @@ export function useArbitrage(): UseArbitrageResult {
       matches,
       freshMatches,
       staleMatches,
+      matchesWithValidPrices,
+      matchesAwaitingPrices,
       polymarketCount: polymarkets.length,
       kalshiCount: kalshiMarkets.length,
       matchedPolyIds,
@@ -171,6 +184,8 @@ export function useArbitrage(): UseArbitrageResult {
     matches: result.matches,
     freshMatches: result.freshMatches,
     staleMatches: result.staleMatches,
+    matchesWithValidPrices: result.matchesWithValidPrices,
+    matchesAwaitingPrices: result.matchesAwaitingPrices,
     polymarketCount: result.polymarketCount,
     kalshiCount: result.kalshiCount,
     isLoading: isDiscovering || isPriceUpdating,

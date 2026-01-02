@@ -435,8 +435,14 @@ export function findArbitrageOpportunities(
     const kalshiYes = kalshi.sideA.probability;
     const kalshiNo = kalshi.sideB.probability;
 
-    // Skip if any prices are 0
+    // Skip if any prices are 0 or missing
     if (!polyYes || !polyNo || !kalshiYes || !kalshiNo) continue;
+    
+    // Skip if Polymarket has default 50/50 prices (not yet fetched)
+    if (polyYes === 0.5 && polyNo === 0.5 && !polymarket.lastPriceUpdatedAt) continue;
+    
+    // Skip if Kalshi has 0 prices (no trades yet)
+    if (kalshiYes === 0 || kalshiNo === 0) continue;
 
     // Direction 1: Buy YES on Kalshi + Buy NO on Polymarket
     const cost1 = kalshiYes + polyNo;
