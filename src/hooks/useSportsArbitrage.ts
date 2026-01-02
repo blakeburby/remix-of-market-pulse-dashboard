@@ -129,20 +129,34 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
 
       const data = await response.json();
 
-      // Different endpoints/versions sometimes wrap the price differently.
-      const price =
-        (typeof data === 'number' ? data : null) ??
-        data?.price ??
-        data?.last_price ??
-        data?.market?.price ??
-        data?.market?.last_price ??
-        data?.data?.price ??
-        data?.data?.last_price ??
+      // Dome/Kalshi responses can vary. We try to derive a usable YES price (in cents).
+      const resolved = (typeof data === 'object' && data !== null && 'market' in data) ? (data as any).market : data;
+
+      const rawLast =
+        (typeof resolved === 'number' ? resolved : null) ??
+        resolved?.price ??
+        resolved?.last_price ??
+        resolved?.data?.price ??
+        resolved?.data?.last_price ??
         null;
 
-      if (typeof price !== 'number') {
-        console.warn('Unexpected Kalshi price payload:', data);
-        return { error: { status: null, message: 'Invalid response format' } };
+      // Prefer bid/ask if present (common for Kalshi sports markets where last_price may be 0)
+      const yesBid = resolved?.yes_bid ?? resolved?.yesBid ?? null;
+      const yesAsk = resolved?.yes_ask ?? resolved?.yesAsk ?? null;
+
+      const derivedFromBidAsk =
+        (typeof yesBid === 'number' && yesBid > 0 && typeof yesAsk === 'number' && yesAsk > 0)
+          ? (yesBid + yesAsk) / 2
+          : (typeof yesAsk === 'number' && yesAsk > 0)
+            ? yesAsk
+            : (typeof yesBid === 'number' && yesBid > 0)
+              ? yesBid
+              : null;
+
+      const price = (derivedFromBidAsk ?? rawLast);
+
+      if (typeof price !== 'number' || price <= 0) {
+        return { error: { status: null, message: 'No price / no liquidity' } };
       }
 
       return { price };
