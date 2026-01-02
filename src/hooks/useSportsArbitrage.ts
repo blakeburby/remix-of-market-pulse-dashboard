@@ -303,41 +303,42 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     }
   }, [getApiKey, sport, date]);
 
-  // Fetch prices for a single pair
-  const fetchPriceForPair = useCallback(async (pair: MatchedMarketPair): Promise<MatchedMarketPair> => {
-    const apiKey = getApiKey();
-    if (!apiKey) return pair;
-
+  // Fetch prices for a single pair (used for retry)
+  const fetchPriceForPair = useCallback(async (pair: MatchedMarketPair, apiKey: string): Promise<MatchedMarketPair> => {
     let kalshiPrices: { yesPrice: number; noPrice: number } | null = null;
     let kalshiBidAsk: BidAskData | null = null;
     let kalshiError: PriceError | null = null;
     let polymarketPrices: { yesPrice: number; noPrice: number } | null = null;
     let polymarketError: PriceError | null = null;
 
-    // Fetch Kalshi price
-    if (pair.kalshi.market_tickers.length >= 1) {
-      const result = await fetchKalshiPrice(pair.kalshi.market_tickers[0], apiKey);
-      if ('price' in result) {
-        kalshiPrices = {
-          yesPrice: result.price / 100,
-          noPrice: 1 - (result.price / 100),
-        };
-        kalshiBidAsk = result.bidAsk || null;
-      } else {
-        kalshiError = result.error;
-      }
+    // Fetch Kalshi and Polymarket prices in PARALLEL
+    const kalshiPromise = pair.kalshi.market_tickers.length >= 1
+      ? fetchKalshiPrice(pair.kalshi.market_tickers[0], apiKey)
+      : Promise.resolve({ error: { status: null, message: 'No market ticker' } as PriceError });
+
+    const polyPromise = pair.polymarket && pair.polymarket.token_ids.length >= 2
+      ? Promise.all([
+          fetchPolymarketPrice(pair.polymarket.token_ids[0], apiKey),
+          fetchPolymarketPrice(pair.polymarket.token_ids[1], apiKey),
+        ])
+      : Promise.resolve(null);
+
+    const [kalshiResult, polyResults] = await Promise.all([kalshiPromise, polyPromise]);
+
+    // Process Kalshi result
+    if ('price' in kalshiResult) {
+      kalshiPrices = {
+        yesPrice: kalshiResult.price / 100,
+        noPrice: 1 - (kalshiResult.price / 100),
+      };
+      kalshiBidAsk = kalshiResult.bidAsk || null;
     } else {
-      kalshiError = { status: null, message: 'No market ticker' };
+      kalshiError = kalshiResult.error;
     }
 
-    // Fetch Polymarket prices
-    if (pair.polymarket && pair.polymarket.token_ids.length >= 2) {
-      const [yesTokenId, noTokenId] = pair.polymarket.token_ids;
-      const [yesResult, noResult] = await Promise.all([
-        fetchPolymarketPrice(yesTokenId, apiKey),
-        fetchPolymarketPrice(noTokenId, apiKey),
-      ]);
-
+    // Process Polymarket result
+    if (polyResults) {
+      const [yesResult, noResult] = polyResults;
       if ('price' in yesResult && 'price' in noResult) {
         polymarketPrices = { yesPrice: yesResult.price, noPrice: noResult.price };
       } else {
@@ -359,45 +360,55 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       pricesFetched: true,
       isRetrying: false,
     };
-  }, [getApiKey, fetchPolymarketPrice, fetchKalshiPrice]);
+  }, [fetchPolymarketPrice, fetchKalshiPrice]);
 
-  // Fetch prices for matched pairs with progress tracking
+  // Fetch prices for all pairs in parallel with concurrency limit
   const fetchPricesForPairs = useCallback(async (pairs: MatchedMarketPair[]): Promise<MatchedMarketPair[]> => {
     const apiKey = getApiKey();
-    if (!apiKey) return pairs;
+    if (!apiKey || pairs.length === 0) return pairs;
 
-    setPriceProgress({ total: pairs.length, completed: 0, current: null });
-    const updatedPairs: MatchedMarketPair[] = [];
+    setPriceProgress({ total: pairs.length, completed: 0, current: 'Fetching all prices...' });
 
-    for (let i = 0; i < pairs.length; i++) {
-      const pair = pairs[i];
-      setPriceProgress({ total: pairs.length, completed: i, current: pair.kalshi.event_ticker });
-      
-      // Add small delay between requests
-      if (i > 0) {
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
+    // Fetch ALL pairs in parallel (max concurrency handled by browser)
+    const BATCH_SIZE = 5; // Process in batches to show progress
+    const results: MatchedMarketPair[] = [];
 
-      const updatedPair = await fetchPriceForPair(pair);
-      updatedPairs.push(updatedPair);
-      
-      // Update state incrementally for better UX
+    for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
+      const batch = pairs.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(pair => fetchPriceForPair(pair, apiKey))
+      );
+      results.push(...batchResults);
+
+      // Update progress and state after each batch
+      setPriceProgress({ 
+        total: pairs.length, 
+        completed: Math.min(i + BATCH_SIZE, pairs.length), 
+        current: null 
+      });
+
+      // Batch update state for all completed pairs
       setMatchedPairs(prev => {
         const newPairs = [...prev];
-        const idx = newPairs.findIndex(p => p.kalshi.event_ticker === pair.kalshi.event_ticker);
-        if (idx >= 0) {
-          newPairs[idx] = updatedPair;
+        for (const updated of batchResults) {
+          const idx = newPairs.findIndex(p => p.kalshi.event_ticker === updated.kalshi.event_ticker);
+          if (idx >= 0) {
+            newPairs[idx] = updated;
+          }
         }
         return newPairs;
       });
     }
 
     setPriceProgress({ total: pairs.length, completed: pairs.length, current: null });
-    return updatedPairs;
+    return results;
   }, [getApiKey, fetchPriceForPair]);
 
   // Retry a single pair
   const retryPair = useCallback(async (eventTicker: string) => {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+
     const pairIndex = matchedPairs.findIndex(p => p.kalshi.event_ticker === eventTicker);
     if (pairIndex === -1) return;
 
@@ -409,14 +420,14 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     });
 
     const pair = matchedPairs[pairIndex];
-    const updatedPair = await fetchPriceForPair(pair);
+    const updatedPair = await fetchPriceForPair(pair, apiKey);
 
     setMatchedPairs(prev => {
       const newPairs = [...prev];
       newPairs[pairIndex] = updatedPair;
       return newPairs;
     });
-  }, [matchedPairs, fetchPriceForPair]);
+  }, [matchedPairs, fetchPriceForPair, getApiKey]);
 
   // Main refresh function
   const refresh = useCallback(async () => {
