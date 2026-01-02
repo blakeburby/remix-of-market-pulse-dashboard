@@ -225,7 +225,10 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       });
 
       if (!response.ok) {
-        return { error: { status: response.status, message: `HTTP ${response.status}` } };
+        const errorMessage = response.status === 404 
+          ? 'Market not found' 
+          : `HTTP ${response.status}`;
+        return { error: { status: response.status, message: errorMessage } };
       }
 
       const data = await response.json();
