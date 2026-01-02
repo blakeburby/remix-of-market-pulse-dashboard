@@ -96,18 +96,17 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     }
   }, []);
 
-  // Fetch Kalshi market price
+  // Fetch Kalshi market price (returns cents 0-100)
   const fetchKalshiPrice = useCallback(async (marketTicker: string, apiKey: string): Promise<number | null> => {
+    const safeTicker = encodeURIComponent(marketTicker);
+
     try {
-      const response = await fetch(
-        `https://api.domeapi.io/v1/kalshi/market-price/${marketTicker}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      const response = await fetch(`https://api.domeapi.io/v1/kalshi/market-price/${safeTicker}`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
       if (!response.ok) {
         console.warn(`Failed to fetch Kalshi price for ${marketTicker}: ${response.status}`);
@@ -115,8 +114,24 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       }
 
       const data = await response.json();
-      // Kalshi prices are in cents (0-100)
-      return data.price ?? data.last_price ?? null;
+
+      // Different endpoints/versions sometimes wrap the price differently.
+      const price =
+        (typeof data === 'number' ? data : null) ??
+        data?.price ??
+        data?.last_price ??
+        data?.market?.price ??
+        data?.market?.last_price ??
+        data?.data?.price ??
+        data?.data?.last_price ??
+        null;
+
+      if (typeof price !== 'number') {
+        console.warn('Unexpected Kalshi price payload:', data);
+        return null;
+      }
+
+      return price;
     } catch (err) {
       console.warn(`Error fetching Kalshi price for ${marketTicker}:`, err);
       return null;
