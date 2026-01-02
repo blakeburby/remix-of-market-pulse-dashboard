@@ -796,7 +796,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return { tokenId, price: null };
     }
 
-    // Allow price updates to run alongside discovery
+    // CRITICAL: Wait for rate limiter BEFORE making request
+    await globalRateLimiter.waitAndAcquire();
 
     try {
       const response = await fetch(
@@ -816,7 +817,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
       if (response.status === 429) {
         const data = await response.json().catch(() => ({}));
-        const retryAfter = data.retry_after || 5;
+        const retryAfter = data.retry_after || 10;
         globalRateLimiter.markRateLimited(retryAfter);
         priceRateLimitedUntil.current = Date.now() + retryAfter * 1000;
         console.log(`[Price] Rate limited, backing off for ${retryAfter}s`);
@@ -845,11 +846,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const priceCursorRef = useRef(0);
   const lastQpsLogAtRef = useRef(0);
 
-  // Fire a single price fetch - non-blocking, queues to batch instead of immediate state update
+  // Fire a single price fetch - uses rate limiter internally
   const firePriceFetch = useCallback((market: UnifiedMarket, apiKey: string) => {
     const tokenId = market.sideA.tokenId!;
     
-    // Fire and forget - don't await
+    // Fire and forget - don't await. Rate limiting happens inside fetchTokenPriceDirect
     fetchTokenPriceDirect(tokenId, apiKey).then(result => {
       if (!isPriceUpdatingRef.current) return;
       
@@ -877,10 +878,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const apiKey = getApiKey();
     if (!apiKey) return;
 
-    // Backoff if API told us to or rate limiter says wait
+    // Backoff if API told us to
     const now = Date.now();
     if (now < priceRateLimitedUntil.current) return;
-    if (!globalRateLimiter.canAcquireNow()) return;
 
     const candidateMarkets = filteredMarketsRef.current.length > 0
       ? filteredMarketsRef.current
@@ -905,10 +905,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     matchedCursorRef.current = idx + 1;
     const market = targetMarkets[idx];
 
-    // Track request in rate limiter
-    globalRateLimiter.trackRequest();
-
-    // Fire non-blocking fetch
+    // Fire non-blocking fetch (rate limiting happens inside fetchTokenPriceDirect)
     firePriceFetch(market, apiKey);
 
     // Debug: log achieved RPM every ~10s
@@ -919,25 +916,88 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getApiKey, firePriceFetch]);
 
+  // Sequential price loop - fetches one at a time with proper rate limiting
+  const priceLoopRunningRef = useRef(false);
+  
+  const runPriceLoop = useCallback(async () => {
+    if (priceLoopRunningRef.current) return;
+    priceLoopRunningRef.current = true;
+    
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      priceLoopRunningRef.current = false;
+      return;
+    }
+    
+    while (isPriceUpdatingRef.current) {
+      const now = Date.now();
+      
+      // Backoff if rate limited
+      if (now < priceRateLimitedUntil.current) {
+        await sleep(priceRateLimitedUntil.current - now + 100);
+        continue;
+      }
+      
+      const candidateMarkets = filteredMarketsRef.current.length > 0
+        ? filteredMarketsRef.current
+        : marketsRef.current;
+
+      const tokenMarkets = candidateMarkets.filter(m =>
+        m.platform === 'POLYMARKET' &&
+        m.sideA.tokenId &&
+        !failedTokenIds.current.has(m.sideA.tokenId)
+      );
+
+      if (tokenMarkets.length === 0) {
+        await sleep(1000); // Wait and retry
+        continue;
+      }
+
+      // Prioritize matched markets
+      const matchedMarkets = tokenMarkets.filter(m => matchedIdsRef.current.has(m.id));
+      const targetMarkets = matchedMarkets.length > 0 ? matchedMarkets : tokenMarkets;
+
+      // Round-robin through target markets
+      const idx = matchedCursorRef.current % targetMarkets.length;
+      matchedCursorRef.current = idx + 1;
+      const market = targetMarkets[idx];
+      const tokenId = market.sideA.tokenId!;
+
+      // Fetch with rate limiting (waitAndAcquire inside)
+      const result = await fetchTokenPriceDirect(tokenId, apiKey);
+      
+      if (result.rateLimited) {
+        // Already handled inside fetchTokenPriceDirect
+        continue;
+      }
+      
+      if (typeof result.price === 'number') {
+        const priceA = result.price;
+        const priceB = 1 - priceA;
+        pendingPriceUpdates.current.set(market.id, {
+          priceA,
+          priceB,
+          timestamp: new Date(),
+        });
+      }
+
+      // Debug: log achieved RPM every ~10s
+      const logNow = Date.now();
+      if (logNow - lastQpsLogAtRef.current > 10000) {
+        lastQpsLogAtRef.current = logNow;
+        console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} matched=${matchedMarkets.length} target=${targetMarkets.length}`);
+      }
+    }
+    
+    priceLoopRunningRef.current = false;
+  }, [getApiKey]);
+
   const startSteadyPriceLoop = useCallback(() => {
-    if (priceDispatchIntervalRef.current) return;
-
-    const intervalMs = globalRateLimiter.getIntervalMs();
-
-    // Fire immediately once, then steady interval.
-    void dispatchOnePriceFetch();
-
-    priceDispatchIntervalRef.current = setInterval(() => {
-      // Do not await inside interval callback; keep steady cadence.
-      void dispatchOnePriceFetch();
-    }, intervalMs);
-  }, [dispatchOnePriceFetch]);
+    runPriceLoop();
+  }, [runPriceLoop]);
 
   const stopSteadyPriceLoop = useCallback(() => {
-    if (priceDispatchIntervalRef.current) {
-      clearInterval(priceDispatchIntervalRef.current);
-      priceDispatchIntervalRef.current = null;
-    }
+    // Loop will stop on its own when isPriceUpdatingRef becomes false
   }, []);
 
   // Backwards-compat: keep runPriceUpdate but it just ensures steady loop is running.
