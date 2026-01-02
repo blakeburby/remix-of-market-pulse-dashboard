@@ -247,34 +247,17 @@ export function ArbitrageView() {
   
   return (
     <div className="space-y-6">
-      {/* Stats Bar */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
-        <span>Polymarket: <strong className="text-foreground">{polymarketCount}</strong></span>
-        <span>Kalshi: <strong className="text-foreground">{kalshiCount}</strong></span>
-        <span>Matched: <strong className="text-foreground">{matches.length}</strong> (<span className="text-green-600">{freshMatches.length} fresh</span>)</span>
-        <span className={freshOpportunities.length > 0 ? 'text-green-600' : ''}>
-          Arbitrage: <strong>{freshOpportunities.length}</strong>
+      {/* Stats Bar - Simplified */}
+      <div className="flex items-center justify-between text-sm">
+        <span className={freshOpportunities.length > 0 ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
+          Active Opportunities: <strong className="text-lg">{freshOpportunities.length}</strong>
         </span>
-        {staleCount > 0 && (
-          <span className="text-muted-foreground/60 flex items-center gap-1">
-            <Clock className="w-3 h-3" />
-            {staleCount} stale
-          </span>
-        )}
-        {lowProfitCount > 0 && (
-          <span className="text-muted-foreground/60 flex items-center gap-1">
-            <Percent className="w-3 h-3" />
-            {lowProfitCount} below {settings.minProfitPercent}%
-          </span>
-        )}
         
-        {/* Force Refresh Button */}
         <Button 
           variant="outline" 
           size="sm" 
           onClick={refreshKalshiPrices}
           disabled={isRefreshingKalshi}
-          className="ml-auto"
         >
           <Zap className={`w-3 h-3 mr-1 ${isRefreshingKalshi ? 'animate-pulse' : ''}`} />
           Refresh Kalshi
@@ -288,16 +271,10 @@ export function ArbitrageView() {
       
       {/* Arbitrage Opportunities */}
       {freshOpportunities.length > 0 ? (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-green-600" />
-            Active Arbitrage Opportunities
-          </h3>
-          <div className="grid gap-4">
-            {freshOpportunities.map(opp => (
-              <ArbitrageCard key={opp.id} opportunity={opp} maxAgeSeconds={settings.maxAgeSeconds} />
-            ))}
-          </div>
+        <div className="grid gap-4">
+          {freshOpportunities.map(opp => (
+            <ArbitrageCard key={opp.id} opportunity={opp} maxAgeSeconds={settings.maxAgeSeconds} />
+          ))}
         </div>
       ) : staleCount > 0 ? (
         <Card className="border-dashed border-chart-4/30 bg-chart-4/5">
@@ -305,7 +282,7 @@ export function ArbitrageView() {
             <RefreshCw className="w-12 h-12 mx-auto text-chart-4 mb-4 animate-spin" style={{ animationDuration: '3s' }} />
             <h3 className="text-lg font-semibold mb-2">Waiting for Fresh Prices…</h3>
             <p className="text-muted-foreground text-sm max-w-md mx-auto">
-              Found {staleCount} potential {staleCount === 1 ? 'opportunity' : 'opportunities'}, but prices need to be refreshed on both platforms within {settings.maxSkewSeconds}s of each other.
+              Found {staleCount} potential {staleCount === 1 ? 'opportunity' : 'opportunities'}, but prices need to be refreshed.
             </p>
             <Button 
               variant="outline" 
@@ -323,30 +300,12 @@ export function ArbitrageView() {
         <Card className="border-dashed">
           <CardContent className="py-8 text-center">
             <Target className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No Arbitrage Opportunities Found</h3>
+            <h3 className="text-lg font-semibold mb-2">No Arbitrage Opportunities</h3>
             <p className="text-muted-foreground text-sm max-w-md mx-auto">
-              Arbitrage opportunities are rare and fleeting. The scanner is continuously monitoring 
-              {matches.length > 0 ? ` ${matches.length} matched market pairs` : ' both platforms'} for price discrepancies.
+              Scanning for price discrepancies across platforms…
             </p>
           </CardContent>
         </Card>
-      )}
-      
-      {/* Matched Markets */}
-      {matches.length > 0 && (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold">
-            Matched Markets ({matches.length})
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            These markets appear to be the same event on both platforms. Combined cost under 100¢ = arbitrage.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {matches.map((match, i) => (
-              <MatchCard key={i} match={match} maxAgeSeconds={settings.maxAgeSeconds} />
-            ))}
-          </div>
-        </div>
       )}
     </div>
   );
