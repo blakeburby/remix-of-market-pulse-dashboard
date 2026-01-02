@@ -12,7 +12,7 @@ import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
 import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 
 type SortOption = 'profit' | 'expiration' | 'freshness';
 
@@ -237,7 +237,7 @@ function ArbitrageCard({ opportunity, maxAgeSeconds, isStale = false }: { opport
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/50">
           <div className="flex items-center gap-2 text-[10px] sm:text-xs text-muted-foreground">
             <Clock className="w-3 h-3" />
-            <span>{formatDistanceToNow(expirationDate, { addSuffix: true })}</span>
+            <span>{format(expirationDate, "MMM d, yyyy 'at' h:mm a")}</span>
             <span className="hidden sm:inline">•</span>
             <span className="hidden sm:inline">{Math.round(match.matchScore * 100)}% match</span>
           </div>
