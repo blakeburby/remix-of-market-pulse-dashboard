@@ -12,7 +12,7 @@ import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
 import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check } from 'lucide-react';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
+import { format } from 'date-fns'; // absolute date format
 
 type SortOption = 'profit' | 'expiration' | 'freshness';
 
