@@ -9,7 +9,7 @@ export interface ArbitrageSettings {
 
 const DEFAULT_SETTINGS: ArbitrageSettings = {
   maxAgeSeconds: 120,           // 2 minutes
-  maxSkewSeconds: 60,           // 1 minute
+  maxSkewSeconds: 900,          // 15 minutes
   minProfitPercent: 0.5,        // 0.5% minimum profit
   kalshiRefreshIntervalSeconds: 30, // Refresh Kalshi every 30s
 };
