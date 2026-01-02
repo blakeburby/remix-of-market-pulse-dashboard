@@ -28,6 +28,62 @@ const STOP_WORDS = new Set([
   'before', 'after', 'during', 'between', 'above', 'below',
 ]);
 
+// Semantic conflict patterns - markets with these conflicting terms should NOT match
+const SEMANTIC_CONFLICTS: [RegExp, RegExp][] = [
+  [/\bnegative\b/i, /(?<!\bnegative\b.*)\bgrowth\b(?!.*\bnegative\b)/i], // "Negative growth" vs just "growth"
+  [/\bunder\b/i, /\bover\b/i],
+  [/\bbelow\b/i, /\babove\b/i],
+  [/\blose\b/i, /\bwin\b/i],
+  [/\bfall\b/i, /\brise\b/i],
+  [/\bdecline\b/i, /\bincrease\b/i],
+  [/\bdecrease\b/i, /\bincrease\b/i],
+  [/\brecession\b/i, /\bexpansion\b/i],
+];
+
+// Time period patterns - if present in one title, must match in the other
+const TIME_PERIOD_PATTERNS: RegExp[] = [
+  /\bq1\b/i, /\bq2\b/i, /\bq3\b/i, /\bq4\b/i,  // Quarters
+  /\bh1\b/i, /\bh2\b/i, // Half years
+  /\bfirst half\b/i, /\bsecond half\b/i,
+  /\bfirst quarter\b/i, /\bsecond quarter\b/i, /\bthird quarter\b/i, /\bfourth quarter\b/i,
+];
+
+/**
+ * Check if two titles have semantic conflicts that mean they're asking opposite questions
+ */
+function hasSemanticConflict(titleA: string, titleB: string): boolean {
+  for (const [patternA, patternB] of SEMANTIC_CONFLICTS) {
+    // If one title matches patternA and the other matches patternB, they conflict
+    const aMatchesA = patternA.test(titleA);
+    const bMatchesB = patternB.test(titleB);
+    const aMatchesB = patternB.test(titleA);
+    const bMatchesA = patternA.test(titleB);
+    
+    if ((aMatchesA && bMatchesB && !aMatchesB && !bMatchesA) ||
+        (aMatchesB && bMatchesA && !aMatchesA && !bMatchesB)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if time periods in titles are incompatible
+ * E.g., "Q4 2025" should not match "full year 2025"
+ */
+function hasTimePeriodConflict(titleA: string, titleB: string): boolean {
+  for (const pattern of TIME_PERIOD_PATTERNS) {
+    const aHas = pattern.test(titleA);
+    const bHas = pattern.test(titleB);
+    
+    // If one has a specific time period and the other doesn't, they might be different markets
+    if (aHas !== bHas) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ===== Title Normalization =====
 
 /**
@@ -303,6 +359,12 @@ export function findMatchingMarkets(
       // Skip if no overlapping time window (strict check)
       if (!hasOverlappingTimeWindow(polymarket, kalshi)) continue;
 
+      // Skip if titles have semantic conflicts (asking opposite questions)
+      if (hasSemanticConflict(polymarket.title, kalshi.title)) continue;
+
+      // Skip if time periods don't match (e.g., Q4 vs full year)
+      if (hasTimePeriodConflict(polymarket.title, kalshi.title)) continue;
+
       // Calculate component scores
       const kalshiTerms = extractKeyTerms(kalshi.title);
       const kalshiEntities = extractEntities(kalshi.title);
@@ -379,6 +441,12 @@ export function findMatchesForNewMarkets(
     for (const kalshi of candidates) {
       if (usedKalshiIds.has(kalshi.id)) continue;
       if (!hasOverlappingTimeWindow(polymarket, kalshi)) continue;
+      
+      // Skip if titles have semantic conflicts (asking opposite questions)
+      if (hasSemanticConflict(polymarket.title, kalshi.title)) continue;
+      
+      // Skip if time periods don't match (e.g., Q4 vs full year)
+      if (hasTimePeriodConflict(polymarket.title, kalshi.title)) continue;
       
       const kalshiTerms = extractKeyTerms(kalshi.title);
       const kalshiEntities = extractEntities(kalshi.title);
