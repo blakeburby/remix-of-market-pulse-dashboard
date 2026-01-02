@@ -44,6 +44,36 @@ export type Database = {
         }
         Relationships: []
       }
+      watchlist_items: {
+        Row: {
+          created_at: string
+          device_id: string
+          display_name: string
+          id: string
+          kalshi_ticker: string
+          match_score: number
+          polymarket_id: string
+        }
+        Insert: {
+          created_at?: string
+          device_id: string
+          display_name: string
+          id?: string
+          kalshi_ticker: string
+          match_score?: number
+          polymarket_id: string
+        }
+        Update: {
+          created_at?: string
+          device_id?: string
+          display_name?: string
+          id?: string
+          kalshi_ticker?: string
+          match_score?: number
+          polymarket_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
