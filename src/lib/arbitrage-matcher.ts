@@ -1,9 +1,11 @@
 import { UnifiedMarket, CrossPlatformMatch, ArbitrageOpportunity, Platform } from '@/types/dome';
+import { MarketIndex, buildIndex, findCandidates, addToIndex, createIndex } from './market-index';
 
 // ===== Configuration =====
 const TIME_WINDOW_DAYS = 3; // Stricter: markets must end within 3 days of each other
 const MIN_TITLE_SIMILARITY = 0.35;
 const MIN_OVERALL_SCORE = 0.5;
+const MIN_SHARED_TERMS_FOR_CANDIDATE = 2;
 
 // ===== Entity Patterns =====
 const ENTITY_PATTERNS = {
@@ -245,8 +247,29 @@ interface MatchCandidate {
   reason: string;
 }
 
+// Cached index for Kalshi markets - rebuilt when markets change
+let cachedKalshiIndex: MarketIndex | null = null;
+let cachedKalshiIds: Set<string> = new Set();
+
+function getOrBuildKalshiIndex(kalshiMarkets: UnifiedMarket[]): MarketIndex {
+  // Check if we need to rebuild
+  const currentIds = new Set(kalshiMarkets.map(m => m.id));
+  const needsRebuild = cachedKalshiIndex === null || 
+    currentIds.size !== cachedKalshiIds.size ||
+    [...currentIds].some(id => !cachedKalshiIds.has(id));
+  
+  if (needsRebuild) {
+    console.log(`[Matcher] Rebuilding Kalshi index with ${kalshiMarkets.length} markets`);
+    cachedKalshiIndex = buildIndex(kalshiMarkets);
+    cachedKalshiIds = currentIds;
+  }
+  
+  return cachedKalshiIndex!;
+}
+
 /**
  * Find matching markets between Polymarket and Kalshi
+ * Uses inverted index for O(n) instead of O(n*m) comparisons
  */
 export function findMatchingMarkets(
   polymarkets: UnifiedMarket[],
@@ -254,15 +277,21 @@ export function findMatchingMarkets(
 ): CrossPlatformMatch[] {
   const matches: CrossPlatformMatch[] = [];
   const usedKalshiIds = new Set<string>();
+  
+  // Build/get Kalshi index for fast lookups
+  const kalshiIndex = getOrBuildKalshiIndex(kalshiMarkets);
 
   for (const polymarket of polymarkets) {
     let bestMatch: MatchCandidate | null = null;
 
-    // Pre-compute polymarket features
+    // Pre-compute polymarket features once
     const polyTerms = extractKeyTerms(polymarket.title);
     const polyEntities = extractEntities(polymarket.title);
 
-    for (const kalshi of kalshiMarkets) {
+    // Use index to find candidates instead of checking all Kalshi markets
+    const candidates = findCandidates(kalshiIndex, polymarket, MIN_SHARED_TERMS_FOR_CANDIDATE);
+
+    for (const kalshi of candidates) {
       // Skip if already matched
       if (usedKalshiIds.has(kalshi.id)) continue;
 
@@ -318,6 +347,64 @@ export function findMatchingMarkets(
 
   // Sort by match score descending
   return matches.sort((a, b) => b.matchScore - a.matchScore);
+}
+
+/**
+ * Incremental matching - find matches for new markets without full recomputation
+ */
+export function findMatchesForNewMarkets(
+  newPolymarkets: UnifiedMarket[],
+  kalshiIndex: MarketIndex,
+  existingMatches: CrossPlatformMatch[]
+): CrossPlatformMatch[] {
+  const usedKalshiIds = new Set(existingMatches.map(m => m.kalshi.id));
+  const newMatches: CrossPlatformMatch[] = [];
+  
+  for (const polymarket of newPolymarkets) {
+    let bestMatch: MatchCandidate | null = null;
+    const polyTerms = extractKeyTerms(polymarket.title);
+    const polyEntities = extractEntities(polymarket.title);
+    
+    const candidates = findCandidates(kalshiIndex, polymarket, MIN_SHARED_TERMS_FOR_CANDIDATE);
+    
+    for (const kalshi of candidates) {
+      if (usedKalshiIds.has(kalshi.id)) continue;
+      if (!hasOverlappingTimeWindow(polymarket, kalshi)) continue;
+      
+      const kalshiTerms = extractKeyTerms(kalshi.title);
+      const kalshiEntities = extractEntities(kalshi.title);
+      
+      const titleScore = calculateJaccardSimilarity(polyTerms, kalshiTerms);
+      const entityScore = calculateEntityScore(polyEntities, kalshiEntities);
+      const tickerScore = calculateTickerScore(polymarket, kalshi);
+      const timeScore = calculateTimeScore(polymarket, kalshi);
+      
+      if (titleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.5) continue;
+      
+      const overallScore = titleScore * 0.4 + entityScore * 0.3 + tickerScore * 0.2 + timeScore * 0.1;
+      
+      if (overallScore >= MIN_OVERALL_SCORE && (!bestMatch || overallScore > bestMatch.score)) {
+        bestMatch = {
+          kalshi,
+          score: Math.min(overallScore, 1),
+          breakdown: { titleScore, entityScore, tickerScore, timeScore },
+          reason: `score ${Math.round(overallScore * 100)}%`,
+        };
+      }
+    }
+    
+    if (bestMatch) {
+      usedKalshiIds.add(bestMatch.kalshi.id);
+      newMatches.push({
+        polymarket,
+        kalshi: bestMatch.kalshi,
+        matchScore: bestMatch.score,
+        matchReason: bestMatch.reason,
+      });
+    }
+  }
+  
+  return newMatches;
 }
 
 // ===== Arbitrage Detection =====
