@@ -100,7 +100,7 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
   const fetchKalshiPrice = useCallback(async (marketTicker: string, apiKey: string): Promise<number | null> => {
     try {
       const response = await fetch(
-        `https://api.domeapi.io/v1/kalshi/market/${marketTicker}`,
+        `https://api.domeapi.io/v1/kalshi/market-price/${marketTicker}`,
         {
           headers: {
             'Authorization': `Bearer ${apiKey}`,
@@ -110,12 +110,15 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       );
 
       if (!response.ok) {
+        console.warn(`Failed to fetch Kalshi price for ${marketTicker}: ${response.status}`);
         return null;
       }
 
       const data = await response.json();
-      return data.last_price ?? null;
-    } catch {
+      // Kalshi prices are in cents (0-100)
+      return data.price ?? data.last_price ?? null;
+    } catch (err) {
+      console.warn(`Error fetching Kalshi price for ${marketTicker}:`, err);
       return null;
     }
   }, []);
