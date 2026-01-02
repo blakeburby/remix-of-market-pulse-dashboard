@@ -1,10 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSportsArbitrage, SportType, MatchedMarketPair, SportsArbitrageOpportunity } from '@/hooks/useSportsArbitrage';
 import { useArbitrageSettings } from '@/hooks/useArbitrageSettings';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ArbitrageSettingsPanel } from '@/components/dashboard/ArbitrageSettingsPanel';
+import { BetCalculator } from '@/components/sports/BetCalculator';
+import { PriceProgressBar } from '@/components/sports/ProgressBar';
+import { AutoRefreshToggle } from '@/components/sports/AutoRefreshToggle';
+import { SearchFilter } from '@/components/sports/SearchFilter';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { 
   RefreshCw, 
@@ -23,7 +28,11 @@ import {
   Target,
   TrendingUp,
   Percent,
-  CalendarIcon
+  CalendarIcon,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
+  ExternalLinkIcon,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 
@@ -44,7 +53,36 @@ function formatProfitPercent(percent: number): string {
   return `+${percent.toFixed(2)}%`;
 }
 
-function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOpportunity }) {
+function getProfitTierColor(percent: number): string {
+  if (percent >= 5) return 'text-green-500 border-green-500 bg-green-500/10';
+  if (percent >= 3) return 'text-emerald-500 border-emerald-500 bg-emerald-500/10';
+  if (percent >= 1) return 'text-yellow-500 border-yellow-500 bg-yellow-500/10';
+  return 'text-orange-500 border-orange-500 bg-orange-500/10';
+}
+
+function getProfitBgGradient(percent: number): string {
+  if (percent >= 5) return 'from-green-500/10 via-green-500/5 to-transparent';
+  if (percent >= 3) return 'from-emerald-500/10 via-emerald-500/5 to-transparent';
+  if (percent >= 1) return 'from-yellow-500/10 via-yellow-500/5 to-transparent';
+  return 'from-orange-500/10 via-orange-500/5 to-transparent';
+}
+
+function openBothPlatforms(kalshiUrl: string, polymarketUrl: string) {
+  window.open(kalshiUrl, '_blank');
+  setTimeout(() => {
+    window.open(polymarketUrl, '_blank');
+  }, 100);
+}
+
+function SportsArbitrageCard({ 
+  opportunity, 
+  showCalculator,
+  onToggleCalculator 
+}: { 
+  opportunity: SportsArbitrageOpportunity;
+  showCalculator: boolean;
+  onToggleCalculator: () => void;
+}) {
   const { 
     title, 
     polymarketSlug, 
@@ -58,6 +96,7 @@ function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOppo
     combinedCost, 
     profitPercent, 
     profitPerDollar,
+    kalshiBidAsk,
   } = opportunity;
 
   const yesPlatformPrice = buyYesOn === 'KALSHI' ? kalshiYesPrice : polyYesPrice;
@@ -66,8 +105,11 @@ function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOppo
   const kalshiUrl = `https://kalshi.com/markets/${kalshiEventTicker}`;
   const polymarketUrl = `https://polymarket.com/event/${polymarketSlug}`;
   
+  const profitTierClass = getProfitTierColor(profitPercent);
+  const bgGradient = getProfitBgGradient(profitPercent);
+  
   return (
-    <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
+    <Card className={cn("border-primary/20 bg-gradient-to-br", bgGradient)}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -76,7 +118,7 @@ function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOppo
               LOCKED ARBITRAGE
             </Badge>
           </div>
-          <Badge variant="outline" className="text-green-600 border-green-600 font-bold text-lg">
+          <Badge variant="outline" className={cn("font-bold text-lg", profitTierClass)}>
             {formatProfitPercent(profitPercent)}
           </Badge>
         </div>
@@ -104,11 +146,16 @@ function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOppo
           </div>
         </div>
 
-        {/* Price Comparison */}
+        {/* Price Comparison + Bid/Ask */}
         <div className="grid grid-cols-2 gap-3 text-xs">
           <div className="p-2 rounded bg-muted/30">
             <p className="text-muted-foreground mb-1">Kalshi</p>
             <p>YES: {formatCents(kalshiYesPrice)} / NO: {formatCents(kalshiNoPrice)}</p>
+            {kalshiBidAsk && kalshiBidAsk.spread !== null && (
+              <p className="text-muted-foreground mt-1">
+                Spread: {kalshiBidAsk.spread}¢
+              </p>
+            )}
           </div>
           <div className="p-2 rounded bg-muted/30">
             <p className="text-muted-foreground mb-1">Polymarket</p>
@@ -130,9 +177,31 @@ function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOppo
             <span>Profit: <strong>${profitPerDollar.toFixed(4)}</strong> per contract</span>
           </div>
         </div>
+
+        {/* Bet Calculator (Collapsible) */}
+        <Collapsible open={showCalculator} onOpenChange={onToggleCalculator}>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="w-full justify-between">
+              <span>Bet Calculator</span>
+              {showCalculator ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2">
+            <BetCalculator opportunity={opportunity} />
+          </CollapsibleContent>
+        </Collapsible>
         
         {/* Footer */}
-        <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
+          <Button 
+            variant="default" 
+            size="sm"
+            onClick={() => openBothPlatforms(kalshiUrl, polymarketUrl)}
+            className="gap-1"
+          >
+            <ExternalLinkIcon className="w-3 h-3" />
+            Open Both
+          </Button>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" asChild>
               <a href={kalshiUrl} target="_blank" rel="noopener noreferrer">
@@ -151,32 +220,42 @@ function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOppo
   );
 }
 
-function MatchedPairCard({ pair }: { pair: MatchedMarketPair }) {
+function MatchedPairCard({ 
+  pair, 
+  onRetry 
+}: { 
+  pair: MatchedMarketPair;
+  onRetry: () => void;
+}) {
   const kalshiUrl = `https://kalshi.com/markets/${pair.kalshi.event_ticker}`;
   const polymarketUrl = pair.polymarket 
     ? `https://polymarket.com/event/${pair.polymarket.market_slug}`
     : null;
 
+  const hasError = pair.kalshiError || pair.polymarketError;
+
   return (
-    <Card>
+    <Card className="group hover:border-primary/30 transition-colors">
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3 mb-3">
-          <div className="flex-1">
-            <p className="font-medium text-sm">
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-sm truncate">
               {pair.kalshi.event_ticker}
             </p>
           </div>
-          {pair.polymarket ? (
-            <Badge variant="default" className="bg-green-600 shrink-0">
-              <CheckCircle2 className="w-3 h-3 mr-1" />
-              Matched
-            </Badge>
-          ) : (
-            <Badge variant="secondary" className="shrink-0">
-              <XCircle className="w-3 h-3 mr-1" />
-              No Match
-            </Badge>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {pair.polymarket ? (
+              <Badge variant="default" className="bg-green-600">
+                <CheckCircle2 className="w-3 h-3 mr-1" />
+                Matched
+              </Badge>
+            ) : (
+              <Badge variant="secondary">
+                <XCircle className="w-3 h-3 mr-1" />
+                No Match
+              </Badge>
+            )}
+          </div>
         </div>
 
         {/* Prices */}
@@ -184,9 +263,16 @@ function MatchedPairCard({ pair }: { pair: MatchedMarketPair }) {
           <div className="p-2 rounded bg-muted/50 text-center">
             <p className="text-xs text-muted-foreground">Kalshi</p>
             {pair.kalshiPrices ? (
-              <p className="font-bold">
-                {formatCents(pair.kalshiPrices.yesPrice)} / {formatCents(pair.kalshiPrices.noPrice)}
-              </p>
+              <>
+                <p className="font-bold">
+                  {formatCents(pair.kalshiPrices.yesPrice)} / {formatCents(pair.kalshiPrices.noPrice)}
+                </p>
+                {pair.kalshiBidAsk && pair.kalshiBidAsk.spread !== null && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Spread: {pair.kalshiBidAsk.spread}¢
+                  </p>
+                )}
+              </>
             ) : pair.kalshiError ? (
               <p className="text-xs text-destructive flex items-center justify-center gap-1">
                 <AlertCircle className="w-3 h-3" />
@@ -195,7 +281,7 @@ function MatchedPairCard({ pair }: { pair: MatchedMarketPair }) {
             ) : pair.pricesFetched ? (
               <p className="text-xs text-muted-foreground">No price</p>
             ) : (
-              <p className="font-bold">Loading...</p>
+              <Skeleton className="h-5 w-16 mx-auto" />
             )}
           </div>
           <div className="p-2 rounded bg-muted/50 text-center">
@@ -214,13 +300,24 @@ function MatchedPairCard({ pair }: { pair: MatchedMarketPair }) {
             ) : pair.pricesFetched ? (
               <p className="text-xs text-muted-foreground">No price</p>
             ) : (
-              <p className="font-bold">Loading...</p>
+              <Skeleton className="h-5 w-16 mx-auto" />
             )}
           </div>
         </div>
 
-        {/* Links */}
+        {/* Links + Retry */}
         <div className="flex gap-2">
+          {hasError && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={onRetry}
+              disabled={pair.isRetrying}
+              className="shrink-0"
+            >
+              <RotateCcw className={cn("w-3 h-3", pair.isRetrying && "animate-spin")} />
+            </Button>
+          )}
           <Button variant="outline" size="sm" asChild className="flex-1">
             <a href={kalshiUrl} target="_blank" rel="noopener noreferrer">
               Kalshi <ExternalLink className="w-3 h-3 ml-1" />
@@ -247,15 +344,43 @@ export default function SportsArbitragePage() {
     opportunities,
     isLoading, 
     isFetchingPrices,
+    priceProgress,
     error, 
     lastRefresh, 
-    refresh, 
+    refresh,
+    retryPair,
     sport, 
     setSport,
     date,
     setDate,
+    autoRefreshEnabled,
+    setAutoRefreshEnabled,
+    autoRefreshCountdown,
+    hideIlliquid,
+    setHideIlliquid,
+    searchQuery,
+    setSearchQuery,
   } = useSportsArbitrage();
   const navigate = useNavigate();
+  
+  // Collapsible sections
+  const [opportunitiesOpen, setOpportunitiesOpen] = useState(true);
+  const [matchedPairsOpen, setMatchedPairsOpen] = useState(true);
+  
+  // Track which calculators are open
+  const [openCalculators, setOpenCalculators] = useState<Set<string>>(new Set());
+  
+  const toggleCalculator = (id: string) => {
+    setOpenCalculators(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -274,8 +399,8 @@ export default function SportsArbitragePage() {
     <div className="min-h-screen bg-background">
       <DashboardHeader onLogout={logout} />
       
-      <main className="container mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-8">
-        {/* Controls */}
+      <main className="container mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-6">
+        {/* Header Controls */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Trophy className="w-6 h-6 text-primary" />
@@ -284,7 +409,7 @@ export default function SportsArbitragePage() {
           
           <div className="flex flex-wrap items-center gap-2">
             <Select value={sport} onValueChange={(v) => setSport(v as SportType)}>
-              <SelectTrigger className="w-[160px]">
+              <SelectTrigger className="w-[140px] h-9">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-popover border border-border">
@@ -301,13 +426,14 @@ export default function SportsArbitragePage() {
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
+                  size="sm"
                   className={cn(
-                    "w-[160px] justify-start text-left font-normal",
+                    "w-[130px] justify-start text-left font-normal h-9",
                     !date && "text-muted-foreground"
                   )}
                 >
                   <CalendarIcon className="mr-2 h-4 w-4" />
-                  {date ? format(date, "MMM d, yyyy") : <span>Pick a date</span>}
+                  {date ? format(date, "MMM d") : <span>Date</span>}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
@@ -333,55 +459,69 @@ export default function SportsArbitragePage() {
               size="sm" 
               onClick={refresh}
               disabled={isLoading || isFetchingPrices}
+              className="h-9"
             >
-              <RefreshCw className={`w-4 h-4 mr-2 ${isLoading || isFetchingPrices ? 'animate-spin' : ''}`} />
+              <RefreshCw className={cn("w-4 h-4 mr-2", (isLoading || isFetchingPrices) && "animate-spin")} />
               Refresh
             </Button>
           </div>
         </div>
 
-        {/* Stats Bar */}
-        <Card className="border-border bg-muted/30">
+        {/* Search + Filters Row */}
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex-1">
+            <SearchFilter
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              hideIlliquid={hideIlliquid}
+              onHideIlliquidChange={setHideIlliquid}
+            />
+          </div>
+          <AutoRefreshToggle
+            enabled={autoRefreshEnabled}
+            onToggle={setAutoRefreshEnabled}
+            countdown={autoRefreshCountdown}
+            isLoading={isLoading || isFetchingPrices}
+          />
+        </div>
+
+        {/* Sticky Stats Bar */}
+        <Card className="border-border bg-muted/30 sticky top-0 z-10">
           <CardContent className="py-3 px-4">
             <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
-              <div className="flex items-center gap-6">
-                <div>
-                  <span className="text-muted-foreground">Sport:</span>
-                  <span className="ml-2 font-medium">{SPORT_LABELS[sport]}</span>
+              <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground text-xs sm:text-sm">Sport:</span>
+                  <span className="font-medium">{SPORT_LABELS[sport]}</span>
                 </div>
-                <div>
+                <div className="hidden sm:flex items-center gap-2">
                   <span className="text-muted-foreground">Date:</span>
-                  <span className="ml-2 font-medium">{format(date, "MMM d, yyyy")}</span>
+                  <span className="font-medium">{format(date, "MMM d, yyyy")}</span>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">Markets:</span>
-                  <span className="ml-2 font-medium">{matchedPairs.length}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground text-xs sm:text-sm">Markets:</span>
+                  <span className="font-medium">{matchedPairs.length}</span>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">Cross-Platform:</span>
-                  <span className="ml-2 font-medium">{matchedCount}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground text-xs sm:text-sm">Priced:</span>
+                  <span className="font-medium">{pricedCount}</span>
                 </div>
-                <div className={opportunities.length > 0 ? 'text-green-600' : ''}>
-                  <span className="text-muted-foreground">Opportunities:</span>
-                  <span className="ml-2 font-bold">{opportunities.length}</span>
+                <div className={cn("flex items-center gap-2", opportunities.length > 0 && 'text-green-600')}>
+                  <span className="text-muted-foreground text-xs sm:text-sm">Opps:</span>
+                  <span className="font-bold">{opportunities.length}</span>
                 </div>
               </div>
               {lastRefresh && (
                 <div className="text-xs text-muted-foreground">
-                  Last refresh: {formatDistanceToNow(lastRefresh, { addSuffix: true })}
+                  {formatDistanceToNow(lastRefresh, { addSuffix: true })}
                 </div>
               )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Loading indicators */}
-        {isFetchingPrices && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <RefreshCw className="w-4 h-4 animate-spin" />
-            <span>Fetching prices...</span>
-          </div>
-        )}
+        {/* Price Progress Bar */}
+        <PriceProgressBar progress={priceProgress} isFetching={isFetchingPrices} />
 
         {/* Error State */}
         {error && (
@@ -402,42 +542,68 @@ export default function SportsArbitragePage() {
               <RefreshCw className="w-4 h-4 animate-spin" />
               <span>Loading {SPORT_LABELS[sport]} markets for {format(date, "MMM d, yyyy")}...</span>
             </div>
-            <div className="grid gap-4">
-              {[1, 2, 3].map(i => (
-                <Skeleton key={i} className="h-48 w-full" />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Arbitrage Opportunities */}
-        {!isLoading && opportunities.length > 0 && (
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-green-600">
-              🎯 Arbitrage Opportunities ({opportunities.length})
-            </h3>
-            <div className="grid gap-4">
-              {opportunities.map(opp => (
-                <SportsArbitrageCard key={opp.id} opportunity={opp} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Matched Pairs without arbitrage */}
-        {!isLoading && matchedPairs.filter(p => p.polymarket).length > 0 && opportunities.length === 0 && (
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium text-muted-foreground">
-              Cross-Platform Matches (no arbitrage at min {settings.minProfitPercent}% profit)
-            </h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {matchedPairs
-                .filter(p => p.polymarket)
-                .map(pair => (
-                  <MatchedPairCard key={pair.kalshi.event_ticker} pair={pair} />
-                ))}
+              {[1, 2, 3].map(i => (
+                <Skeleton key={i} className="h-40 w-full" />
+              ))}
             </div>
           </div>
+        )}
+
+        {/* Arbitrage Opportunities Section */}
+        {!isLoading && opportunities.length > 0 && (
+          <Collapsible open={opportunitiesOpen} onOpenChange={setOpportunitiesOpen}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="w-full justify-between p-0 h-auto hover:bg-transparent">
+                <h3 className="text-lg font-semibold text-green-600 flex items-center gap-2">
+                  🎯 Arbitrage Opportunities ({opportunities.length})
+                </h3>
+                {opportunitiesOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-4">
+              <div className="grid gap-4">
+                {opportunities.map(opp => (
+                  <SportsArbitrageCard 
+                    key={opp.id} 
+                    opportunity={opp}
+                    showCalculator={openCalculators.has(opp.id)}
+                    onToggleCalculator={() => toggleCalculator(opp.id)}
+                  />
+                ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {/* Matched Pairs Section */}
+        {!isLoading && matchedPairs.filter(p => p.polymarket).length > 0 && (
+          <Collapsible open={matchedPairsOpen} onOpenChange={setMatchedPairsOpen}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="w-full justify-between p-0 h-auto hover:bg-transparent">
+                <h3 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                  Cross-Platform Matches ({matchedPairs.filter(p => p.polymarket).length})
+                  {opportunities.length === 0 && (
+                    <span className="text-xs">(no arbitrage at min {settings.minProfitPercent}%)</span>
+                  )}
+                </h3>
+                {matchedPairsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {matchedPairs
+                  .filter(p => p.polymarket)
+                  .map(pair => (
+                    <MatchedPairCard 
+                      key={pair.kalshi.event_ticker} 
+                      pair={pair}
+                      onRetry={() => retryPair(pair.kalshi.event_ticker)}
+                    />
+                  ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         )}
 
         {/* Empty State */}
@@ -450,7 +616,7 @@ export default function SportsArbitragePage() {
                 No matching {SPORT_LABELS[sport]} markets found for {format(date, "MMMM d, yyyy")}. Try a different date or sport.
               </p>
               <Button variant="outline" onClick={refresh} disabled={isLoading}>
-                <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
                 Refresh
               </Button>
             </CardContent>
