@@ -51,6 +51,8 @@ export interface SportsArbitrageOpportunity {
   title: string;
   polymarketSlug: string;
   kalshiEventTicker: string;
+  /** A specific Kalshi market ticker under the event (used for deep-linking). */
+  kalshiMarketTicker: string;
   kalshiYesPrice: number;
   kalshiNoPrice: number;
   polyYesPrice: number;
@@ -588,6 +590,7 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
             title: pair.kalshi.event_ticker,
             polymarketSlug: pair.polymarket.market_slug,
             kalshiEventTicker: pair.kalshi.event_ticker,
+            kalshiMarketTicker: pair.kalshi.market_tickers[0],
             kalshiYesPrice: kalshiYes,
             kalshiNoPrice: kalshiNo,
             polyYesPrice: polyYes,
@@ -615,6 +618,7 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
             title: pair.kalshi.event_ticker,
             polymarketSlug: pair.polymarket.market_slug,
             kalshiEventTicker: pair.kalshi.event_ticker,
+            kalshiMarketTicker: pair.kalshi.market_tickers[0],
             kalshiYesPrice: kalshiYes,
             kalshiNoPrice: kalshiNo,
             polyYesPrice: polyYes,
