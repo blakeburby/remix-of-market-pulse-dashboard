@@ -112,10 +112,62 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
   }, []);
 
   // Fetch Kalshi market price (returns cents 0-100)
+  // For sports, "last_price" is frequently 0 even when there is an active bid/ask.
+  // We therefore prefer YES bid/ask when available and fall back to last trade price.
   const fetchKalshiPrice = useCallback(async (marketTicker: string, apiKey: string): Promise<PriceResult> => {
     const safeTicker = encodeURIComponent(marketTicker);
 
+    const deriveYesPriceCents = (payload: any): number | null => {
+      const resolved = (typeof payload === 'object' && payload !== null && 'market' in payload)
+        ? payload.market
+        : payload;
+
+      const yesBid = resolved?.yes_bid ?? resolved?.yesBid ?? null;
+      const yesAsk = resolved?.yes_ask ?? resolved?.yesAsk ?? null;
+
+      const fromBidAsk =
+        (typeof yesBid === 'number' && yesBid > 0 && typeof yesAsk === 'number' && yesAsk > 0)
+          ? (yesBid + yesAsk) / 2
+          : (typeof yesAsk === 'number' && yesAsk > 0)
+            ? yesAsk
+            : (typeof yesBid === 'number' && yesBid > 0)
+              ? yesBid
+              : null;
+
+      if (typeof fromBidAsk === 'number' && fromBidAsk > 0) return fromBidAsk;
+
+      const rawLast =
+        (typeof resolved === 'number' ? resolved : null) ??
+        resolved?.price ??
+        resolved?.last_price ??
+        resolved?.data?.price ??
+        resolved?.data?.last_price ??
+        null;
+
+      return (typeof rawLast === 'number' && rawLast > 0) ? rawLast : null;
+    };
+
+    const fetchMarketSnapshot = async (): Promise<any | null> => {
+      // Some Dome endpoints support filtering by tickers; if not, we fail quietly.
+      try {
+        const resp = await fetch(`https://api.domeapi.io/v1/kalshi/markets?tickers=${safeTicker}&limit=1`, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!resp.ok) return null;
+        const json = await resp.json();
+        const first = Array.isArray(json?.markets) ? json.markets[0] : null;
+        return first ?? null;
+      } catch {
+        return null;
+      }
+    };
+
     try {
+      // Primary: dedicated price endpoint
       const response = await fetch(`https://api.domeapi.io/v1/kalshi/market-price/${safeTicker}`, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -128,40 +180,20 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       }
 
       const data = await response.json();
+      let price = deriveYesPriceCents(data);
 
-      // Dome/Kalshi responses can vary. We try to derive a usable YES price (in cents).
-      const resolved = (typeof data === 'object' && data !== null && 'market' in data) ? (data as any).market : data;
+      // Fallback: markets snapshot (bid/ask/last) when price endpoint returns 0 or missing
+      if (!price) {
+        const snapshot = await fetchMarketSnapshot();
+        price = snapshot ? deriveYesPriceCents(snapshot) : null;
+      }
 
-      const rawLast =
-        (typeof resolved === 'number' ? resolved : null) ??
-        resolved?.price ??
-        resolved?.last_price ??
-        resolved?.data?.price ??
-        resolved?.data?.last_price ??
-        null;
-
-      // Prefer bid/ask if present (common for Kalshi sports markets where last_price may be 0)
-      const yesBid = resolved?.yes_bid ?? resolved?.yesBid ?? null;
-      const yesAsk = resolved?.yes_ask ?? resolved?.yesAsk ?? null;
-
-      const derivedFromBidAsk =
-        (typeof yesBid === 'number' && yesBid > 0 && typeof yesAsk === 'number' && yesAsk > 0)
-          ? (yesBid + yesAsk) / 2
-          : (typeof yesAsk === 'number' && yesAsk > 0)
-            ? yesAsk
-            : (typeof yesBid === 'number' && yesBid > 0)
-              ? yesBid
-              : null;
-
-      const price = (derivedFromBidAsk ?? rawLast);
-
-      if (typeof price !== 'number' || price <= 0) {
+      if (!price) {
         return { error: { status: null, message: 'No price / no liquidity' } };
       }
 
       return { price };
     } catch (err) {
-      console.warn(`Error fetching Kalshi price for ${marketTicker}:`, err);
       return { error: { status: null, message: err instanceof Error ? err.message : 'Network error' } };
     }
   }, []);
