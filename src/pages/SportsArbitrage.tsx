@@ -34,7 +34,7 @@ import {
   RotateCcw,
   ExternalLinkIcon,
 } from 'lucide-react';
-import { format, formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow, addDays, subDays, startOfToday } from 'date-fns';
 
 const SPORT_LABELS: Record<SportType, string> = {
   nfl: 'NFL',
@@ -442,6 +442,34 @@ export default function SportsArbitragePage() {
                 <SelectItem value="cbb">{SPORT_LABELS.cbb}</SelectItem>
               </SelectContent>
             </Select>
+
+            {/* Quick Date Controls */}
+            <div className="flex items-center gap-1 mr-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 px-2 text-xs"
+                onClick={() => setDate(subDays(date, 1))}
+              >
+                ←
+              </Button>
+              <Button
+                variant={format(date, 'yyyy-MM-dd') === format(startOfToday(), 'yyyy-MM-dd') ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-9 px-2 text-xs"
+                onClick={() => setDate(startOfToday())}
+              >
+                Today
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 px-2 text-xs"
+                onClick={() => setDate(addDays(date, 1))}
+              >
+                →
+              </Button>
+            </div>
 
             <Popover>
               <PopoverTrigger asChild>

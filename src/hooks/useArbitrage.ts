@@ -7,6 +7,7 @@ import { useArbitrageSettings } from './useArbitrageSettings';
 export interface UseArbitrageResult {
   opportunities: ArbitrageOpportunity[];
   freshOpportunities: ArbitrageOpportunity[];
+  staleOpportunities: ArbitrageOpportunity[]; // Stale opportunities for display when toggle is on
   staleCount: number; // Number of opportunities filtered out due to staleness
   lowProfitCount: number; // Number filtered out due to low profit
   matches: CrossPlatformMatch[];
@@ -155,10 +156,15 @@ export function useArbitrage(): UseArbitrageResult {
     const freshOpportunities = filterByProfitThreshold(freshByTime, settings.minProfitPercent);
     const lowProfitCount = freshByTime.length - freshOpportunities.length;
     
+    // Stale opportunities (not fresh but still meet profit threshold)
+    const staleByTime = opportunities.filter(opp => !freshByTime.includes(opp));
+    const staleOpportunities = filterByProfitThreshold(staleByTime, settings.minProfitPercent);
+    
     return {
       opportunities,
       freshOpportunities,
-      staleCount: opportunities.length - freshByTime.length,
+      staleOpportunities,
+      staleCount: staleOpportunities.length,
       lowProfitCount,
       matches,
       freshMatches,
@@ -179,6 +185,7 @@ export function useArbitrage(): UseArbitrageResult {
   return {
     opportunities: result.opportunities,
     freshOpportunities: result.freshOpportunities,
+    staleOpportunities: result.staleOpportunities,
     staleCount: result.staleCount,
     lowProfitCount: result.lowProfitCount,
     matches: result.matches,

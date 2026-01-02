@@ -2,6 +2,7 @@ import { Settings, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Popover,
   PopoverContent,
@@ -105,6 +106,24 @@ export function ArbitrageSettingsPanel({
               <p className="text-xs text-muted-foreground">
                 Minimum profit to show (default: {defaults.minProfitPercent}%)
               </p>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <div className="space-y-0.5">
+                <Label htmlFor="showStale" className="text-sm text-foreground">
+                  Show Stale Opportunities
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Display expired with warning badge
+                </p>
+              </div>
+              <Switch
+                id="showStale"
+                checked={settings.showStaleOpportunities}
+                onCheckedChange={(checked) =>
+                  updateSettings({ showStaleOpportunities: checked })
+                }
+              />
             </div>
           </div>
         </div>
