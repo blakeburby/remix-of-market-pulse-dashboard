@@ -102,7 +102,9 @@ function SportsArbitrageCard({
   const yesPlatformPrice = buyYesOn === 'KALSHI' ? kalshiYesPrice : polyYesPrice;
   const noPlatformPrice = buyNoOn === 'KALSHI' ? kalshiNoPrice : polyNoPrice;
   
-  const kalshiUrl = `https://kalshi.com/markets/${kalshiEventTicker}`;
+  // Kalshi URL format: https://kalshi.com/markets/EVENT_TICKER/MARKET_TICKER
+  // For now, use event ticker which redirects properly
+  const kalshiUrl = `https://kalshi.com/markets/${kalshiEventTicker.toLowerCase()}`;
   const polymarketUrl = `https://polymarket.com/event/${polymarketSlug}`;
   
   const profitTierClass = getProfitTierColor(profitPercent);
@@ -227,7 +229,8 @@ function MatchedPairCard({
   pair: MatchedMarketPair;
   onRetry: () => void;
 }) {
-  const kalshiUrl = `https://kalshi.com/markets/${pair.kalshi.event_ticker}`;
+  // Kalshi URL uses lowercase event ticker
+  const kalshiUrl = `https://kalshi.com/markets/${pair.kalshi.event_ticker.toLowerCase()}`;
   const polymarketUrl = pair.polymarket 
     ? `https://polymarket.com/event/${pair.polymarket.market_slug}`
     : null;
