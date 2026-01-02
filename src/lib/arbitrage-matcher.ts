@@ -280,6 +280,11 @@ export function findMatchingMarkets(
   
   // Build/get Kalshi index for fast lookups
   const kalshiIndex = getOrBuildKalshiIndex(kalshiMarkets);
+  
+  // Log total contracts being compared
+  const polyContracts = polymarkets.length * 2;
+  const kalshiContracts = kalshiMarkets.length * 2;
+  console.log(`[Matcher] Comparing ${polymarkets.length} Polymarket markets (${polyContracts} contracts) with ${kalshiMarkets.length} Kalshi markets (${kalshiContracts} contracts)`);
 
   for (const polymarket of polymarkets) {
     let bestMatch: MatchCandidate | null = null;
@@ -345,6 +350,10 @@ export function findMatchingMarkets(
     }
   }
 
+  // Log matching results
+  const matchedContracts = matches.length * 4; // 2 contracts per market * 2 platforms
+  console.log(`[Matcher] Found ${matches.length} matched pairs (${matchedContracts} contracts in matched markets)`);
+  
   // Sort by match score descending
   return matches.sort((a, b) => b.matchScore - a.matchScore);
 }

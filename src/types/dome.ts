@@ -187,6 +187,15 @@ export interface DashboardSummary {
   marketsWithPrices: number;
   discoveryProgress: DiscoveryProgress | null;
   liveRpm: number;
+  // Contract tracking
+  totalContracts: number;
+  matchedMarkets: number;
+  matchedContracts: number;
+  matchCoveragePercent: number;
+  contractsByPlatform: {
+    polymarket: number;
+    kalshi: number;
+  };
 }
 
 // Filter Options

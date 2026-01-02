@@ -264,11 +264,31 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Calculate summary - use deferred markets for smoother UI
   const summary: DashboardSummary = React.useMemo(() => {
-    const polymarketCount = deferredMarkets.filter(m => m.platform === 'POLYMARKET').length;
-    const kalshiCount = deferredMarkets.filter(m => m.platform === 'KALSHI').length;
+    const polymarketMarkets = deferredMarkets.filter(m => m.platform === 'POLYMARKET');
+    const kalshiMarketsFiltered = deferredMarkets.filter(m => m.platform === 'KALSHI');
+    const polymarketCount = polymarketMarkets.length;
+    const kalshiCount = kalshiMarketsFiltered.length;
+    
+    // Count all contracts (each market has 2 sides: Yes/No)
+    const polyContracts = polymarketMarkets.length * 2;
+    const kalshiContracts = kalshiMarketsFiltered.length * 2;
+    const totalContracts = polyContracts + kalshiContracts;
+    
+    // Count token IDs (for Polymarket tokens specifically)
     const tokenCount = deferredMarkets.reduce((acc, m) => {
       return acc + (m.sideA.tokenId ? 1 : 0) + (m.sideB.tokenId ? 1 : 0);
     }, 0);
+
+    // Count matched markets and contracts
+    const matchedMarketCount = matchedPolymarketIds.size;
+    // Matched pairs = matchedMarketCount Polymarket + matchedMarketCount Kalshi
+    // Contracts in matched markets = pairs * 2 sides * 2 platforms
+    const matchedContractCount = matchedMarketCount * 4;
+    
+    // Calculate coverage (what % of Polymarket markets are matched)
+    const matchCoverage = polymarketCount > 0 
+      ? (matchedMarketCount / polymarketCount) * 100 
+      : 0;
 
     // Count markets with updated prices (not default 50/50)
     const updatedPriceCount = deferredMarkets.filter(m => 
@@ -300,8 +320,17 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       marketsWithPrices: updatedPriceCount,
       discoveryProgress,
       liveRpm,
+      // Contract tracking
+      totalContracts,
+      matchedMarkets: matchedMarketCount,
+      matchedContracts: matchedContractCount,
+      matchCoveragePercent: matchCoverage,
+      contractsByPlatform: {
+        polymarket: polyContracts,
+        kalshi: kalshiContracts,
+      },
     };
-  }, [deferredMarkets, syncState, lastPriceUpdate, isPriceUpdating, wsConnected, discoveryProgress, liveRpm]);
+  }, [deferredMarkets, syncState, lastPriceUpdate, isPriceUpdating, wsConnected, discoveryProgress, liveRpm, matchedPolymarketIds]);
 
   const setFilters = useCallback((newFilters: Partial<MarketFilters>) => {
     setFiltersState(prev => ({ ...prev, ...newFilters }));
@@ -1130,6 +1159,11 @@ export function useMarkets(): MarketsContextType {
     marketsWithPrices: 0,
     discoveryProgress: null,
     liveRpm: 0,
+    totalContracts: 0,
+    matchedMarkets: 0,
+    matchedContracts: 0,
+    matchCoveragePercent: 0,
+    contractsByPlatform: { polymarket: 0, kalshi: 0 },
   };
 
   return {
