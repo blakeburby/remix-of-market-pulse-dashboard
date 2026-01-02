@@ -86,7 +86,8 @@ function SportsArbitrageCard({
   const { 
     title, 
     polymarketSlug, 
-    kalshiEventTicker, 
+    kalshiEventTicker,
+    kalshiMarketTicker,
     buyYesOn, 
     buyNoOn,
     kalshiYesPrice,
@@ -102,9 +103,8 @@ function SportsArbitrageCard({
   const yesPlatformPrice = buyYesOn === 'KALSHI' ? kalshiYesPrice : polyYesPrice;
   const noPlatformPrice = buyNoOn === 'KALSHI' ? kalshiNoPrice : polyNoPrice;
   
-  // Kalshi URL format: https://kalshi.com/markets/EVENT_TICKER/MARKET_TICKER
-  // For now, use event ticker which redirects properly
-  const kalshiUrl = `https://kalshi.com/markets/${kalshiEventTicker.toLowerCase()}`;
+  // Kalshi URL format: https://kalshi.com/markets/{event_ticker}/{market_ticker}
+  const kalshiUrl = `https://kalshi.com/markets/${kalshiEventTicker.toLowerCase()}/${kalshiMarketTicker.toLowerCase()}`;
   const polymarketUrl = `https://polymarket.com/event/${polymarketSlug}`;
   
   const profitTierClass = getProfitTierColor(profitPercent);
@@ -229,8 +229,8 @@ function MatchedPairCard({
   pair: MatchedMarketPair;
   onRetry: () => void;
 }) {
-  // Kalshi URL uses lowercase event ticker
-  const kalshiUrl = `https://kalshi.com/markets/${pair.kalshi.event_ticker.toLowerCase()}`;
+  const marketTicker = pair.kalshi.market_tickers[0];
+  const kalshiUrl = `https://kalshi.com/markets/${pair.kalshi.event_ticker.toLowerCase()}/${marketTicker.toLowerCase()}`;
   const polymarketUrl = pair.polymarket 
     ? `https://polymarket.com/event/${pair.polymarket.market_slug}`
     : null;
