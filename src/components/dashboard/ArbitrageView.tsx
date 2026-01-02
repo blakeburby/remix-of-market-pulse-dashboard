@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useArbitrage } from '@/hooks/useArbitrage';
 import { useMarkets } from '@/contexts/MarketsContext';
+import { useWatchlist } from '@/hooks/useWatchlist';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,9 +11,9 @@ import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check } from 'lucide-react';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check, Star } from 'lucide-react';
 import { toast } from 'sonner';
-import { format } from 'date-fns'; // absolute date format
+import { format } from 'date-fns';
 
 type SortOption = 'profit' | 'expiration' | 'freshness';
 
@@ -83,7 +84,19 @@ function FreshnessIndicator({
 }
 
 
-function ArbitrageCard({ opportunity, maxAgeSeconds, isStale = false }: { opportunity: ArbitrageOpportunity; maxAgeSeconds: number; isStale?: boolean }) {
+function ArbitrageCard({ 
+  opportunity, 
+  maxAgeSeconds, 
+  isStale = false,
+  isWatchlisted = false,
+  onToggleWatchlist
+}: { 
+  opportunity: ArbitrageOpportunity; 
+  maxAgeSeconds: number; 
+  isStale?: boolean;
+  isWatchlisted?: boolean;
+  onToggleWatchlist?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const { match, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate } = opportunity;
   
@@ -265,6 +278,14 @@ function ArbitrageCard({ opportunity, maxAgeSeconds, isStale = false }: { opport
               {copied ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
               <span className="hidden sm:inline">{copied ? 'Copied!' : 'Copy Plan'}</span>
             </Button>
+            <Button 
+              variant={isWatchlisted ? "default" : "outline"}
+              size="sm" 
+              className={`h-7 px-2 text-xs ${isWatchlisted ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}`}
+              onClick={onToggleWatchlist}
+            >
+              <Star className={`w-3 h-3 ${isWatchlisted ? 'fill-current' : ''}`} />
+            </Button>
             <Link to={`/calculator?kalshi=${Math.round(yesPlatformPrice * 100)}&poly=${Math.round(noPlatformPrice * 100)}`}>
               <Button variant="secondary" size="sm" className="h-7 px-2 sm:px-3 text-xs font-medium">
                 <Calculator className="w-3 h-3 mr-1" />
@@ -383,6 +404,7 @@ export function ArbitrageView() {
   } = useArbitrage();
   
   const { refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary } = useMarkets();
+  const { isInWatchlist, toggleWatchlist } = useWatchlist();
   const [sortBy, setSortBy] = useState<SortOption>('profit');
 
   // Combine fresh and stale if toggle is on
@@ -524,7 +546,19 @@ export function ArbitrageView() {
       {displayOpportunities.length > 0 ? (
         <div className="grid gap-3 sm:gap-4">
           {displayOpportunities.map(opp => (
-            <ArbitrageCard key={opp.id} opportunity={opp} maxAgeSeconds={settings.maxAgeSeconds} isStale={staleIds.has(opp.id)} />
+            <ArbitrageCard 
+              key={opp.id} 
+              opportunity={opp} 
+              maxAgeSeconds={settings.maxAgeSeconds} 
+              isStale={staleIds.has(opp.id)}
+              isWatchlisted={isInWatchlist(opp.match.polymarket.conditionId, opp.match.kalshi.kalshiMarketTicker)}
+              onToggleWatchlist={() => toggleWatchlist(
+                opp.match.polymarket.conditionId,
+                opp.match.kalshi.kalshiMarketTicker,
+                opp.match.matchScore,
+                opp.match.polymarket.title
+              )}
+            />
           ))}
         </div>
       ) : staleCount > 0 && !settings.showStaleOpportunities ? (
