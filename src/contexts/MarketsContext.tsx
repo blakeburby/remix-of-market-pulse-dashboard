@@ -645,9 +645,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           // DON'T warm prices during discovery - wait until matching is done
           // This saves thousands of API calls for unmatched markets
         } else {
-          const data: KalshiMarketsResponse = await response.json();
-          pageMarkets = data.markets.map(convertKalshiMarket);
-          hasMore = data.pagination.has_more;
+          const data = await response.json();
+          pageMarkets = (data.markets || []).map(convertKalshiMarket);
+          // Kalshi API may not include pagination object - infer hasMore from result count
+          hasMore = data.pagination?.has_more ?? (pageMarkets.length === limit);
         }
 
         allMarkets.push(...pageMarkets);
