@@ -1,13 +1,17 @@
+import { useState, useMemo } from 'react';
 import { useArbitrage } from '@/hooks/useArbitrage';
 import { useMarkets } from '@/contexts/MarketsContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, Percent, RefreshCw, Zap, Timer } from 'lucide-react';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, Percent, RefreshCw, Zap, Timer, ArrowUpDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+
+type SortOption = 'profit' | 'expiration' | 'freshness';
 
 // Helper to format age in human-readable format
 function formatAge(date: Date | undefined | null): string {
@@ -228,6 +232,31 @@ export function ArbitrageView() {
   } = useArbitrage();
   
   const { refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh } = useMarkets();
+  const [sortBy, setSortBy] = useState<SortOption>('profit');
+
+  const sortedOpportunities = useMemo(() => {
+    const sorted = [...freshOpportunities];
+    switch (sortBy) {
+      case 'profit':
+        return sorted.sort((a, b) => b.profitPercent - a.profitPercent);
+      case 'expiration':
+        return sorted.sort((a, b) => a.expirationDate.getTime() - b.expirationDate.getTime());
+      case 'freshness':
+        return sorted.sort((a, b) => {
+          const aFresh = Math.max(
+            a.match.polymarket.lastPriceUpdatedAt?.getTime() || 0,
+            a.match.kalshi.lastPriceUpdatedAt?.getTime() || 0
+          );
+          const bFresh = Math.max(
+            b.match.polymarket.lastPriceUpdatedAt?.getTime() || 0,
+            b.match.kalshi.lastPriceUpdatedAt?.getTime() || 0
+          );
+          return bFresh - aFresh;
+        });
+      default:
+        return sorted;
+    }
+  }, [freshOpportunities, sortBy]);
   
   if (isLoading && matches.length === 0) {
     return (
@@ -247,11 +276,27 @@ export function ArbitrageView() {
   
   return (
     <div className="space-y-6">
-      {/* Stats Bar - Simplified */}
-      <div className="flex items-center justify-between text-sm">
-        <span className={freshOpportunities.length > 0 ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
-          Active Opportunities: <strong className="text-lg">{freshOpportunities.length}</strong>
-        </span>
+      {/* Controls Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+        <div className="flex items-center gap-3">
+          <span className={freshOpportunities.length > 0 ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
+            Active: <strong className="text-lg">{freshOpportunities.length}</strong>
+          </span>
+          
+          {freshOpportunities.length > 1 && (
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+              <SelectTrigger className="w-[140px] h-8 text-xs">
+                <ArrowUpDown className="w-3 h-3 mr-1" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="profit">Highest Profit</SelectItem>
+                <SelectItem value="expiration">Soonest Expiry</SelectItem>
+                <SelectItem value="freshness">Most Fresh</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        </div>
         
         <Button 
           variant="outline" 
@@ -270,9 +315,9 @@ export function ArbitrageView() {
       </div>
       
       {/* Arbitrage Opportunities */}
-      {freshOpportunities.length > 0 ? (
+      {sortedOpportunities.length > 0 ? (
         <div className="grid gap-4">
-          {freshOpportunities.map(opp => (
+          {sortedOpportunities.map(opp => (
             <ArbitrageCard key={opp.id} opportunity={opp} maxAgeSeconds={settings.maxAgeSeconds} />
           ))}
         </div>
