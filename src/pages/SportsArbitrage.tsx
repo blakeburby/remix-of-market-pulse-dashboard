@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSportsArbitrage } from '@/hooks/useSportsArbitrage';
+import { useSportsArbitrage, SportType, MatchedMarketPair } from '@/hooks/useSportsArbitrage';
 import { useArbitrageSettings } from '@/hooks/useArbitrageSettings';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ArbitrageSettingsPanel } from '@/components/dashboard/ArbitrageSettingsPanel';
@@ -12,119 +12,83 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   RefreshCw, 
-  Target, 
-  TrendingUp, 
-  Percent, 
-  Clock, 
-  ExternalLink,
   AlertCircle,
-  Trophy
+  Trophy,
+  ExternalLink,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { SportType, SportsArbitrageOpportunity } from '@/types/sports-arbitrage';
-
-function formatCents(price: number): string {
-  return `${Math.round(price * 100)}¢`;
-}
-
-function formatProfitPercent(percent: number): string {
-  return `+${percent.toFixed(2)}%`;
-}
 
 const SPORT_LABELS: Record<SportType, string> = {
-  cfb: 'College Football',
   nfl: 'NFL',
   nba: 'NBA',
   mlb: 'MLB',
   nhl: 'NHL',
+  cfb: 'College Football',
 };
 
-function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOpportunity }) {
-  const { match, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate } = opportunity;
-  
-  const polymarketUrl = `https://polymarket.com/event/${match.polymarket_market_slug}`;
-  const kalshiUrl = `https://kalshi.com/markets/${match.kalshi_event_ticker}`;
-  
+function MatchedPairCard({ pair }: { pair: MatchedMarketPair }) {
+  const kalshiUrl = `https://kalshi.com/markets/${pair.kalshi.event_ticker}`;
+  const polymarketUrl = pair.polymarket 
+    ? `https://polymarket.com/event/${pair.polymarket.market_slug}`
+    : null;
+
   return (
-    <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Target className="w-5 h-5 text-primary" />
-            <Badge variant="default" className="bg-green-600 hover:bg-green-700">
-              LOCKED ARBITRAGE
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="flex-1">
+            <p className="font-medium text-sm">
+              {pair.kalshiMarket?.title || pair.kalshi.event_ticker}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {pair.kalshi.event_ticker}
+            </p>
+          </div>
+          {pair.polymarket ? (
+            <Badge variant="default" className="bg-green-600 shrink-0">
+              <CheckCircle2 className="w-3 h-3 mr-1" />
+              Matched
             </Badge>
-          </div>
-          <Badge variant="outline" className="text-green-600 border-green-600 font-bold text-lg">
-            {formatProfitPercent(profitPercent)}
-          </Badge>
+          ) : (
+            <Badge variant="secondary" className="shrink-0">
+              <XCircle className="w-3 h-3 mr-1" />
+              No Match
+            </Badge>
+          )}
         </div>
-        <CardTitle className="text-base sm:text-lg leading-tight mt-2">
-          {match.polymarket_title}
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Kalshi: {match.kalshi_title}
-        </p>
-      </CardHeader>
-      
-      <CardContent className="space-y-4">
-        {/* Trade Instructions */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="p-3 rounded-lg bg-muted/50 border">
-            <p className="text-xs text-muted-foreground mb-1">BUY YES on</p>
-            <div className="flex items-center justify-between">
-              <span className="font-semibold">{buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</span>
-              <span className="text-lg font-bold text-primary">{formatCents(yesPlatformPrice)}</span>
+
+        {/* Prices */}
+        {pair.kalshiMarket && (
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="p-2 rounded bg-muted/50 text-center">
+              <p className="text-xs text-muted-foreground">Kalshi Price</p>
+              <p className="font-bold">{pair.kalshiMarket.last_price}¢</p>
+            </div>
+            <div className="p-2 rounded bg-muted/50 text-center">
+              <p className="text-xs text-muted-foreground">Polymarket</p>
+              <p className="font-bold text-muted-foreground">
+                {pair.polymarket ? 'Fetch needed' : '—'}
+              </p>
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-muted/50 border">
-            <p className="text-xs text-muted-foreground mb-1">BUY NO on</p>
-            <div className="flex items-center justify-between">
-              <span className="font-semibold">{buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</span>
-              <span className="text-lg font-bold text-primary">{formatCents(noPlatformPrice)}</span>
-            </div>
-          </div>
-        </div>
-        
-        {/* Profit Summary */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          <div className="flex items-center gap-1.5">
-            <TrendingUp className="w-4 h-4 text-muted-foreground" />
-            <span>Cost: <strong>{formatCents(combinedCost)}</strong></span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Percent className="w-4 h-4 text-muted-foreground" />
-            <span>Payout: <strong>$1.00</strong></span>
-          </div>
-          <div className="flex items-center gap-1.5 text-green-600">
-            <span>Profit: <strong>${profitPerDollar.toFixed(4)}</strong> per contract</span>
-          </div>
-        </div>
-        
-        {/* Footer */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" />
-              <span>Expires {formatDistanceToNow(expirationDate, { addSuffix: true })}</span>
-            </div>
-            <div>
-              Match: <span className="font-medium">{Math.round(match.match_score * 100)}%</span>
-            </div>
-          </div>
-          
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <a href={kalshiUrl} target="_blank" rel="noopener noreferrer">
-                Kalshi <ExternalLink className="w-3 h-3 ml-1" />
-              </a>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
+        )}
+
+        {/* Links */}
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" asChild className="flex-1">
+            <a href={kalshiUrl} target="_blank" rel="noopener noreferrer">
+              Kalshi <ExternalLink className="w-3 h-3 ml-1" />
+            </a>
+          </Button>
+          {polymarketUrl && (
+            <Button variant="outline" size="sm" asChild className="flex-1">
               <a href={polymarketUrl} target="_blank" rel="noopener noreferrer">
                 Polymarket <ExternalLink className="w-3 h-3 ml-1" />
               </a>
             </Button>
-          </div>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -135,9 +99,10 @@ export default function SportsArbitragePage() {
   const { isAuthenticated, logout } = useAuth();
   const { settings, updateSettings, resetSettings, defaults } = useArbitrageSettings();
   const { 
-    matches, 
-    opportunities, 
+    kalshiMarkets,
+    matchedPairs,
     isLoading, 
+    isLoadingMatches,
     error, 
     lastRefresh, 
     refresh, 
@@ -156,6 +121,8 @@ export default function SportsArbitragePage() {
     return null;
   }
 
+  const matchedCount = matchedPairs.filter(p => p.polymarket).length;
+
   return (
     <div className="min-h-screen bg-background">
       <DashboardHeader onLogout={logout} />
@@ -173,12 +140,12 @@ export default function SportsArbitragePage() {
               <SelectTrigger className="w-[160px]">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="cfb">{SPORT_LABELS.cfb}</SelectItem>
+              <SelectContent className="bg-popover border border-border">
                 <SelectItem value="nfl">{SPORT_LABELS.nfl}</SelectItem>
                 <SelectItem value="nba">{SPORT_LABELS.nba}</SelectItem>
                 <SelectItem value="mlb">{SPORT_LABELS.mlb}</SelectItem>
                 <SelectItem value="nhl">{SPORT_LABELS.nhl}</SelectItem>
+                <SelectItem value="cfb">{SPORT_LABELS.cfb}</SelectItem>
               </SelectContent>
             </Select>
             
@@ -211,12 +178,12 @@ export default function SportsArbitragePage() {
                   <span className="ml-2 font-medium">{SPORT_LABELS[sport]}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Matched Markets:</span>
-                  <span className="ml-2 font-medium">{matches.length}</span>
+                  <span className="text-muted-foreground">Kalshi Markets:</span>
+                  <span className="ml-2 font-medium">{kalshiMarkets.length}</span>
                 </div>
-                <div className="text-green-600">
-                  <span className="text-muted-foreground">Opportunities:</span>
-                  <span className="ml-2 font-bold">{opportunities.length}</span>
+                <div className={matchedCount > 0 ? 'text-green-600' : ''}>
+                  <span className="text-muted-foreground">Matched:</span>
+                  <span className="ml-2 font-bold">{matchedCount}</span>
                 </div>
               </div>
               {lastRefresh && (
@@ -227,6 +194,14 @@ export default function SportsArbitragePage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Loading Matches indicator */}
+        {isLoadingMatches && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            <span>Finding matching Polymarket markets...</span>
+          </div>
+        )}
 
         {/* Error State */}
         {error && (
@@ -241,40 +216,61 @@ export default function SportsArbitragePage() {
         )}
 
         {/* Loading State */}
-        {isLoading && matches.length === 0 && (
+        {isLoading && kalshiMarkets.length === 0 && (
           <div className="space-y-4">
             <div className="flex items-center gap-2 text-muted-foreground">
-              <AlertCircle className="w-4 h-4" />
+              <RefreshCw className="w-4 h-4 animate-spin" />
               <span>Loading {SPORT_LABELS[sport]} markets...</span>
             </div>
-            <div className="grid gap-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map(i => (
-                <Skeleton key={i} className="h-48 w-full" />
+                <Skeleton key={i} className="h-40 w-full" />
               ))}
             </div>
           </div>
         )}
 
-        {/* Opportunities */}
-        {!isLoading && opportunities.length > 0 && (
-          <div className="grid gap-4">
-            {opportunities.map(opp => (
-              <SportsArbitrageCard key={opp.id} opportunity={opp} />
-            ))}
+        {/* Matched Pairs */}
+        {!isLoading && matchedPairs.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium text-muted-foreground">
+              Cross-Platform Matches ({matchedCount} found)
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {matchedPairs
+                .filter(p => p.polymarket)
+                .map(pair => (
+                  <MatchedPairCard key={pair.kalshi.event_ticker} pair={pair} />
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Kalshi-only markets */}
+        {!isLoading && kalshiMarkets.length > 0 && matchedPairs.filter(p => !p.polymarket).length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium text-muted-foreground">
+              Kalshi Markets (no Polymarket match)
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {matchedPairs
+                .filter(p => !p.polymarket)
+                .slice(0, 6)
+                .map(pair => (
+                  <MatchedPairCard key={pair.kalshi.event_ticker} pair={pair} />
+                ))}
+            </div>
           </div>
         )}
 
         {/* Empty State */}
-        {!isLoading && !error && opportunities.length === 0 && (
+        {!isLoading && !error && kalshiMarkets.length === 0 && (
           <Card className="border-dashed">
             <CardContent className="py-8 text-center">
               <Trophy className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No Arbitrage Opportunities</h3>
+              <h3 className="text-lg font-semibold mb-2">No {SPORT_LABELS[sport]} Markets Found</h3>
               <p className="text-muted-foreground text-sm max-w-md mx-auto mb-4">
-                {matches.length > 0 
-                  ? `Found ${matches.length} matched ${SPORT_LABELS[sport]} markets, but no profitable arbitrage opportunities with min ${settings.minProfitPercent}% profit.`
-                  : `No matched markets found for ${SPORT_LABELS[sport]}. Try a different sport.`
-                }
+                No open {SPORT_LABELS[sport]} markets found on Kalshi. Try a different sport or check back later.
               </p>
               <Button variant="outline" onClick={refresh} disabled={isLoading}>
                 <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
