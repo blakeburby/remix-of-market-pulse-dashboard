@@ -224,11 +224,20 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
         },
       });
 
+      // Some deployments of the API don't expose /kalshi/market-price; fall back to /kalshi/markets?tickers=
       if (!response.ok) {
-        const errorMessage = response.status === 404 
-          ? 'Market not found' 
-          : `HTTP ${response.status}`;
-        return { error: { status: response.status, message: errorMessage } };
+        if (response.status === 404) {
+          const snapshot = await fetchMarketSnapshot();
+          if (snapshot) {
+            const fromSnapshot = deriveYesPriceCents(snapshot);
+            if (fromSnapshot.price) {
+              return { price: fromSnapshot.price, bidAsk: fromSnapshot.bidAsk };
+            }
+          }
+          return { error: { status: 404, message: 'Market not found' } };
+        }
+
+        return { error: { status: response.status, message: `HTTP ${response.status}` } };
       }
 
       const data = await response.json();
