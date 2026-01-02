@@ -98,6 +98,7 @@ function ArbitrageCard({
   onToggleWatchlist?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copiedTicker, setCopiedTicker] = useState<string | null>(null);
   const { match, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate } = opportunity;
   
   const polymarketUrl = match.polymarket.marketSlug 
@@ -107,19 +108,43 @@ function ArbitrageCard({
     ? `https://kalshi.com/markets/${match.kalshi.kalshiEventTicker}`
     : '#';
 
+  // Get the outcome labels for each side of the trade
+  const yesMarket = buyYesOn === 'KALSHI' ? match.kalshi : match.polymarket;
+  const noMarket = buyNoOn === 'KALSHI' ? match.kalshi : match.polymarket;
+  const yesOutcomeLabel = yesMarket.sideA.label || 'Yes';
+  const noOutcomeLabel = noMarket.sideB.label || 'No';
+
+  const copyTicker = (ticker: string, platform: string) => {
+    navigator.clipboard.writeText(ticker).then(() => {
+      setCopiedTicker(ticker);
+      toast.success(`${platform} ticker copied!`);
+      setTimeout(() => setCopiedTicker(null), 2000);
+    });
+  };
+
   const copyTradePlan = () => {
     const tradePlan = `📈 ARBITRAGE TRADE PLAN
 ━━━━━━━━━━━━━━━━━━━━━━━
 
-📋 Market: ${match.polymarket.title}
+📋 POLYMARKET CONTRACT
+   Name: ${match.polymarket.title}
+   Slug: ${match.polymarket.marketSlug || 'N/A'}
+   Link: ${polymarketUrl}
 
-📊 STEP 1: Buy YES on ${buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}
+📋 KALSHI CONTRACT
+   Name: ${match.kalshi.title}
+   Ticker: ${match.kalshi.kalshiMarketTicker || 'N/A'}
+   Link: ${kalshiUrl}
+
+📊 STEP 1: Buy ${yesOutcomeLabel.toUpperCase()} on ${buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}
+   Contract: ${buyYesOn === 'KALSHI' ? match.kalshi.title : match.polymarket.title}
+   Outcome: ${yesOutcomeLabel}
    Price: ${formatCents(yesPlatformPrice)}
-   Link: ${buyYesOn === 'KALSHI' ? kalshiUrl : polymarketUrl}
 
-📊 STEP 2: Buy NO on ${buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}
+📊 STEP 2: Buy ${noOutcomeLabel.toUpperCase()} on ${buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}
+   Contract: ${buyNoOn === 'KALSHI' ? match.kalshi.title : match.polymarket.title}
+   Outcome: ${noOutcomeLabel}
    Price: ${formatCents(noPlatformPrice)}
-   Link: ${buyNoOn === 'KALSHI' ? kalshiUrl : polymarketUrl}
 
 💰 PROFIT SUMMARY
    Total Cost: ${formatCents(combinedCost)}
@@ -175,43 +200,85 @@ function ArbitrageCard({
       </div>
       
       <CardContent className="p-3 sm:p-4 space-y-3 sm:space-y-4">
-        {/* Title */}
-        <h3 className="text-sm sm:text-base font-semibold leading-tight line-clamp-2">
-          {match.polymarket.title}
-        </h3>
+        {/* Contract Details Section */}
+        <div className="space-y-2">
+          {/* Polymarket Contract */}
+          <div className="p-2.5 rounded-lg bg-muted/50 border border-border/50">
+            <div className="flex items-center gap-1.5 mb-1">
+              <PolymarketIcon className="w-3.5 h-3.5" />
+              <span className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Polymarket</span>
+            </div>
+            <p className="text-xs sm:text-sm font-medium leading-tight line-clamp-2 mb-1.5">
+              {match.polymarket.title}
+            </p>
+            {match.polymarket.marketSlug && (
+              <button 
+                onClick={() => copyTicker(match.polymarket.marketSlug!, 'Polymarket')}
+                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors bg-muted px-1.5 py-0.5 rounded"
+              >
+                {copiedTicker === match.polymarket.marketSlug ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+                <span className="font-mono truncate max-w-[150px] sm:max-w-[200px]">{match.polymarket.marketSlug}</span>
+              </button>
+            )}
+          </div>
+          
+          {/* Kalshi Contract */}
+          <div className="p-2.5 rounded-lg bg-muted/50 border border-border/50">
+            <div className="flex items-center gap-1.5 mb-1">
+              <KalshiIcon className="w-3.5 h-3.5" />
+              <span className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Kalshi</span>
+            </div>
+            <p className="text-xs sm:text-sm font-medium leading-tight line-clamp-2 mb-1.5">
+              {match.kalshi.title}
+            </p>
+            {match.kalshi.kalshiMarketTicker && (
+              <button 
+                onClick={() => copyTicker(match.kalshi.kalshiMarketTicker!, 'Kalshi')}
+                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors bg-muted px-1.5 py-0.5 rounded"
+              >
+                {copiedTicker === match.kalshi.kalshiMarketTicker ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+                <span className="font-mono">{match.kalshi.kalshiMarketTicker}</span>
+              </button>
+            )}
+          </div>
+        </div>
         
         {/* Trade Steps - Mobile Optimized */}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
           {/* Step 1 */}
-          <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-card border border-border">
-            <div className="flex flex-col items-center gap-1">
+          <div className="flex items-start gap-3 p-2.5 sm:p-3 rounded-xl bg-card border border-border">
+            <div className="flex flex-col items-center gap-1 shrink-0">
               <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-chart-4/20 flex items-center justify-center">
                 <span className="text-xs sm:text-sm font-bold text-chart-4">1</span>
               </div>
               {buyYesOn === 'KALSHI' ? <KalshiIcon className="w-4 h-4 sm:w-5 sm:h-5" /> : <PolymarketIcon className="w-4 h-4 sm:w-5 sm:h-5" />}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Buy Yes on</p>
-              <p className="font-semibold text-sm sm:text-base">{buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</p>
+              <p className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Buy {yesOutcomeLabel} on {buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</p>
+              <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2 mt-0.5">
+                {buyYesOn === 'KALSHI' ? match.kalshi.title : match.polymarket.title}
+              </p>
             </div>
-            <div className="text-right">
+            <div className="text-right shrink-0">
               <p className="text-lg sm:text-2xl font-bold text-chart-4">{formatCents(yesPlatformPrice)}</p>
             </div>
           </div>
           
           {/* Step 2 */}
-          <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-card border border-border">
-            <div className="flex flex-col items-center gap-1">
+          <div className="flex items-start gap-3 p-2.5 sm:p-3 rounded-xl bg-card border border-border">
+            <div className="flex flex-col items-center gap-1 shrink-0">
               <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-chart-4/20 flex items-center justify-center">
                 <span className="text-xs sm:text-sm font-bold text-chart-4">2</span>
               </div>
               {buyNoOn === 'KALSHI' ? <KalshiIcon className="w-4 h-4 sm:w-5 sm:h-5" /> : <PolymarketIcon className="w-4 h-4 sm:w-5 sm:h-5" />}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Buy No on</p>
-              <p className="font-semibold text-sm sm:text-base">{buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</p>
+              <p className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Buy {noOutcomeLabel} on {buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</p>
+              <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2 mt-0.5">
+                {buyNoOn === 'KALSHI' ? match.kalshi.title : match.polymarket.title}
+              </p>
             </div>
-            <div className="text-right">
+            <div className="text-right shrink-0">
               <p className="text-lg sm:text-2xl font-bold text-chart-4">{formatCents(noPlatformPrice)}</p>
             </div>
           </div>
