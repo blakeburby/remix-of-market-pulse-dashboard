@@ -3,9 +3,11 @@ import { MarketIndex, buildIndex, findCandidates, addToIndex, createIndex } from
 
 // ===== Configuration =====
 const TIME_WINDOW_DAYS = 3; // Stricter: markets must end within 3 days of each other
-const MIN_TITLE_SIMILARITY = 0.35;
-const MIN_OVERALL_SCORE = 0.5;
-const MIN_SHARED_TERMS_FOR_CANDIDATE = 2;
+const MIN_TITLE_SIMILARITY = 0.20; // Lowered to catch more potential matches
+const MIN_OVERALL_SCORE = 0.30; // Lowered to catch bracket variations
+const MIN_SHARED_TERMS_FOR_CANDIDATE = 1; // Lowered to 1 for better coverage
+const BASE_EVENT_SIMILARITY_BOOST = 0.3; // Bonus for matching base events
+const BRACKET_MATCH_BOOST = 0.2; // Bonus for overlapping bracket ranges
 
 // ===== Entity Patterns =====
 const ENTITY_PATTERNS = {
@@ -48,6 +50,24 @@ const TIME_PERIOD_PATTERNS: RegExp[] = [
   /\bfirst quarter\b/i, /\bsecond quarter\b/i, /\bthird quarter\b/i, /\bfourth quarter\b/i,
 ];
 
+// Bracket/range patterns for multi-outcome markets
+const BRACKET_PATTERNS = [
+  /(\d+(?:\.\d+)?)\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*%?/i, // "2.1 to 2.5" or "2.0-2.5%"
+  /(\d+(?:\.\d+)?)\s*%?\s*(?:or\s+)?(?:above|more|higher|\+)/i, // "3% or above"
+  /(\d+(?:\.\d+)?)\s*%?\s*(?:or\s+)?(?:below|less|lower|-)/i, // "2% or below"
+  /[<>]\s*(\d+(?:\.\d+)?)\s*%?/i, // "<2%" or ">3%"
+  /(?:under|below)\s+(\d+(?:\.\d+)?)\s*%?/i, // "under 2%"
+  /(?:over|above)\s+(\d+(?:\.\d+)?)\s*%?/i, // "over 3%"
+];
+
+// Category keywords for topic-based matching
+const TOPIC_CATEGORIES: Record<string, string[]> = {
+  economic: ['gdp', 'growth', 'inflation', 'unemployment', 'rate', 'economy', 'fed', 'interest', 'recession', 'cpi', 'pce'],
+  political: ['election', 'president', 'congress', 'vote', 'senate', 'house', 'governor', 'mayor', 'trump', 'biden'],
+  crypto: ['bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'price', 'token'],
+  sports: ['super bowl', 'nba', 'nfl', 'mlb', 'world series', 'championship', 'finals', 'win', 'winner'],
+};
+
 /**
  * Check if two titles have semantic conflicts that mean they're asking opposite questions
  */
@@ -82,6 +102,181 @@ function hasTimePeriodConflict(titleA: string, titleB: string): boolean {
     }
   }
   return false;
+}
+
+// ===== Bracket/Range Extraction =====
+
+interface BracketRange {
+  low: number;
+  high: number;
+  type: 'range' | 'above' | 'below';
+}
+
+/**
+ * Extract bracket range from a title (e.g., "2.1 to 2.5" -> {low: 2.1, high: 2.5})
+ */
+function extractBracketRange(title: string): BracketRange | null {
+  const normalized = title.toLowerCase();
+  
+  // Try range patterns first: "X to Y" or "X-Y%"
+  const rangeMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%?\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*%?/);
+  if (rangeMatch) {
+    return {
+      low: parseFloat(rangeMatch[1]),
+      high: parseFloat(rangeMatch[2]),
+      type: 'range',
+    };
+  }
+  
+  // Try "X or above/more/higher"
+  const aboveMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%?\s*(?:or\s+)?(?:above|more|higher|\+)/);
+  if (aboveMatch) {
+    return { low: parseFloat(aboveMatch[1]), high: Infinity, type: 'above' };
+  }
+  
+  // Try ">X" or "over X"
+  const gtMatch = normalized.match(/(?:>|over\s+|above\s+)(\d+(?:\.\d+)?)\s*%?/);
+  if (gtMatch) {
+    return { low: parseFloat(gtMatch[1]), high: Infinity, type: 'above' };
+  }
+  
+  // Try "X or below/less/lower"
+  const belowMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%?\s*(?:or\s+)?(?:below|less|lower|-)/);
+  if (belowMatch) {
+    return { low: -Infinity, high: parseFloat(belowMatch[1]), type: 'below' };
+  }
+  
+  // Try "<X" or "under X"
+  const ltMatch = normalized.match(/(?:<|under\s+|below\s+)(\d+(?:\.\d+)?)\s*%?/);
+  if (ltMatch) {
+    return { low: -Infinity, high: parseFloat(ltMatch[1]), type: 'below' };
+  }
+  
+  return null;
+}
+
+/**
+ * Check if two bracket ranges overlap (with tolerance)
+ */
+function areBracketsCompatible(rangeA: BracketRange | null, rangeB: BracketRange | null, tolerance: number = 0.5): boolean {
+  // If neither has a bracket, they're compatible (base event matching)
+  if (!rangeA && !rangeB) return true;
+  
+  // If only one has a bracket, they might still be the same market (one more specific)
+  if (!rangeA || !rangeB) return true;
+  
+  // Check for overlap with tolerance
+  const aLow = rangeA.low === -Infinity ? rangeA.low : rangeA.low - tolerance;
+  const aHigh = rangeA.high === Infinity ? rangeA.high : rangeA.high + tolerance;
+  const bLow = rangeB.low === -Infinity ? rangeB.low : rangeB.low - tolerance;
+  const bHigh = rangeB.high === Infinity ? rangeB.high : rangeB.high + tolerance;
+  
+  // Ranges overlap if: aLow <= bHigh && bLow <= aHigh
+  return aLow <= bHigh && bLow <= aHigh;
+}
+
+/**
+ * Calculate bracket similarity score
+ */
+function calculateBracketScore(titleA: string, titleB: string): number {
+  const rangeA = extractBracketRange(titleA);
+  const rangeB = extractBracketRange(titleB);
+  
+  // Both have ranges and they overlap well
+  if (rangeA && rangeB) {
+    if (rangeA.type === 'range' && rangeB.type === 'range') {
+      // Calculate overlap percentage
+      const overlapLow = Math.max(rangeA.low, rangeB.low);
+      const overlapHigh = Math.min(rangeA.high, rangeB.high);
+      
+      if (overlapLow <= overlapHigh) {
+        const overlapSize = overlapHigh - overlapLow;
+        const avgRangeSize = ((rangeA.high - rangeA.low) + (rangeB.high - rangeB.low)) / 2;
+        if (avgRangeSize > 0) {
+          return Math.min(overlapSize / avgRangeSize, 1);
+        }
+      }
+    }
+    // Same type bounds match
+    if (rangeA.type === rangeB.type) {
+      const diff = rangeA.type === 'above' 
+        ? Math.abs(rangeA.low - rangeB.low) 
+        : Math.abs(rangeA.high - rangeB.high);
+      return diff <= 0.5 ? 1 : diff <= 1 ? 0.5 : 0;
+    }
+  }
+  
+  // Neither has a range - neutral
+  if (!rangeA && !rangeB) return 0;
+  
+  return 0;
+}
+
+// ===== Base Event Extraction =====
+
+/**
+ * Extract the base event topic by removing bracket/range information
+ * "GDP growth in 2025? 2.1 to 2.5" -> "gdp growth 2025"
+ */
+function extractBaseEvent(title: string): string {
+  return title
+    .toLowerCase()
+    // Remove bracket ranges
+    .replace(/\d+(?:\.\d+)?%?\s*(?:to|-)\s*\d+(?:\.\d+)?%?/g, '')
+    // Remove "X or above/below" patterns
+    .replace(/\d+(?:\.\d+)?%?\s*(?:or\s+)?(?:above|below|more|less|higher|lower)/gi, '')
+    // Remove comparison operators with numbers
+    .replace(/[<>]\s*\d+(?:\.\d+)?%?/g, '')
+    // Remove "under/over X" patterns
+    .replace(/(?:under|over|above|below)\s+\d+(?:\.\d+)?%?/gi, '')
+    // Clean up punctuation
+    .replace(/[?!.,'"():;\[\]{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Calculate similarity based on base event (ignoring brackets)
+ */
+function calculateBaseEventScore(titleA: string, titleB: string): number {
+  const baseA = extractBaseEvent(titleA);
+  const baseB = extractBaseEvent(titleB);
+  
+  const termsA = baseA.split(' ').filter(t => t.length > 2 && !STOP_WORDS.has(t));
+  const termsB = baseB.split(' ').filter(t => t.length > 2 && !STOP_WORDS.has(t));
+  
+  if (termsA.length === 0 || termsB.length === 0) return 0;
+  
+  const setA = new Set(termsA);
+  const setB = new Set(termsB);
+  const intersection = new Set([...setA].filter(x => setB.has(x)));
+  const union = new Set([...setA, ...setB]);
+  
+  return intersection.size / union.size;
+}
+
+/**
+ * Get topic category for a market title
+ */
+function getTopicCategory(title: string): string | null {
+  const normalized = title.toLowerCase();
+  for (const [category, keywords] of Object.entries(TOPIC_CATEGORIES)) {
+    if (keywords.some(kw => normalized.includes(kw))) {
+      return category;
+    }
+  }
+  return null;
+}
+
+/**
+ * Calculate category match score
+ */
+function calculateCategoryScore(titleA: string, titleB: string): number {
+  const catA = getTopicCategory(titleA);
+  const catB = getTopicCategory(titleB);
+  
+  if (catA && catB && catA === catB) return 1;
+  return 0;
 }
 
 // ===== Title Normalization =====
@@ -296,9 +491,12 @@ interface MatchCandidate {
   score: number;
   breakdown: {
     titleScore: number;
+    baseEventScore: number;
+    bracketScore: number;
     entityScore: number;
     tickerScore: number;
     timeScore: number;
+    categoryScore: number;
   };
   reason: string;
 }
@@ -370,32 +568,53 @@ export function findMatchingMarkets(
       const kalshiEntities = extractEntities(kalshi.title);
 
       const titleScore = calculateJaccardSimilarity(polyTerms, kalshiTerms);
+      const baseEventScore = calculateBaseEventScore(polymarket.title, kalshi.title);
+      const bracketScore = calculateBracketScore(polymarket.title, kalshi.title);
       const entityScore = calculateEntityScore(polyEntities, kalshiEntities);
       const tickerScore = calculateTickerScore(polymarket, kalshi);
       const timeScore = calculateTimeScore(polymarket, kalshi);
+      const categoryScore = calculateCategoryScore(polymarket.title, kalshi.title);
 
-      // Skip if title similarity is too low (unless ticker matches)
-      if (titleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.5) continue;
+      // Use the higher of title score or base event score (for bracket markets)
+      const effectiveTitleScore = Math.max(titleScore, baseEventScore);
+
+      // Skip if effective title similarity is too low (unless ticker matches or category matches)
+      if (effectiveTitleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.5 && categoryScore < 1) continue;
 
       // Calculate weighted overall score
-      // Weights: Title 40%, Entities 30%, Ticker 20%, Time 10%
-      const overallScore = 
-        titleScore * 0.4 +
-        entityScore * 0.3 +
-        tickerScore * 0.2 +
-        timeScore * 0.1;
+      // Enhanced weights: Base event 30%, Entities 20%, Ticker 15%, Time 10%, Category 15%, Bracket bonus 10%
+      let overallScore = 
+        effectiveTitleScore * 0.30 +
+        entityScore * 0.20 +
+        tickerScore * 0.15 +
+        timeScore * 0.10 +
+        categoryScore * 0.15 +
+        bracketScore * 0.10;
+
+      // Bonus for matching base event (important for bracket markets)
+      if (baseEventScore >= 0.7) {
+        overallScore += BASE_EVENT_SIMILARITY_BOOST * 0.3;
+      }
+      
+      // Bonus for compatible brackets
+      if (bracketScore >= 0.5) {
+        overallScore += BRACKET_MATCH_BOOST * 0.3;
+      }
 
       if (overallScore >= MIN_OVERALL_SCORE && (!bestMatch || overallScore > bestMatch.score)) {
         const reasons: string[] = [];
-        if (titleScore >= 0.4) reasons.push(`title ${Math.round(titleScore * 100)}%`);
+        if (baseEventScore >= 0.6) reasons.push(`base event ${Math.round(baseEventScore * 100)}%`);
+        else if (titleScore >= 0.4) reasons.push(`title ${Math.round(titleScore * 100)}%`);
+        if (bracketScore >= 0.5) reasons.push(`bracket match`);
         if (entityScore >= 0.3) reasons.push(`entities ${Math.round(entityScore * 100)}%`);
         if (tickerScore >= 0.5) reasons.push(`ticker match`);
+        if (categoryScore >= 1) reasons.push(`same category`);
         if (timeScore >= 0.8) reasons.push(`same timeframe`);
 
         bestMatch = {
           kalshi,
           score: Math.min(overallScore, 1),
-          breakdown: { titleScore, entityScore, tickerScore, timeScore },
+          breakdown: { titleScore, baseEventScore, bracketScore, entityScore, tickerScore, timeScore, categoryScore },
           reason: reasons.length > 0 ? reasons.join(' + ') : `score ${Math.round(overallScore * 100)}%`,
         };
       }
@@ -452,19 +671,33 @@ export function findMatchesForNewMarkets(
       const kalshiEntities = extractEntities(kalshi.title);
       
       const titleScore = calculateJaccardSimilarity(polyTerms, kalshiTerms);
+      const baseEventScore = calculateBaseEventScore(polymarket.title, kalshi.title);
+      const bracketScore = calculateBracketScore(polymarket.title, kalshi.title);
       const entityScore = calculateEntityScore(polyEntities, kalshiEntities);
       const tickerScore = calculateTickerScore(polymarket, kalshi);
       const timeScore = calculateTimeScore(polymarket, kalshi);
+      const categoryScore = calculateCategoryScore(polymarket.title, kalshi.title);
       
-      if (titleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.5) continue;
+      const effectiveTitleScore = Math.max(titleScore, baseEventScore);
       
-      const overallScore = titleScore * 0.4 + entityScore * 0.3 + tickerScore * 0.2 + timeScore * 0.1;
+      if (effectiveTitleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.5 && categoryScore < 1) continue;
+      
+      let overallScore = 
+        effectiveTitleScore * 0.30 +
+        entityScore * 0.20 +
+        tickerScore * 0.15 +
+        timeScore * 0.10 +
+        categoryScore * 0.15 +
+        bracketScore * 0.10;
+      
+      if (baseEventScore >= 0.7) overallScore += BASE_EVENT_SIMILARITY_BOOST * 0.3;
+      if (bracketScore >= 0.5) overallScore += BRACKET_MATCH_BOOST * 0.3;
       
       if (overallScore >= MIN_OVERALL_SCORE && (!bestMatch || overallScore > bestMatch.score)) {
         bestMatch = {
           kalshi,
           score: Math.min(overallScore, 1),
-          breakdown: { titleScore, entityScore, tickerScore, timeScore },
+          breakdown: { titleScore, baseEventScore, bracketScore, entityScore, tickerScore, timeScore, categoryScore },
           reason: `score ${Math.round(overallScore * 100)}%`,
         };
       }
