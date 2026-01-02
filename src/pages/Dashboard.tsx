@@ -2,15 +2,18 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMarkets } from '@/contexts/MarketsContext';
+import { useArbitrageSettings } from '@/hooks/useArbitrageSettings';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { ArbitrageView } from '@/components/dashboard/ArbitrageView';
+import { ArbitrageSettingsPanel } from '@/components/dashboard/ArbitrageSettingsPanel';
 import { Button } from '@/components/ui/button';
 import { Play, Pause } from 'lucide-react';
 
 export default function DashboardPage() {
   const { isAuthenticated, logout } = useAuth();
   const { summary, syncState, isPriceUpdating, startPriceUpdates, stopPriceUpdates } = useMarkets();
+  const { settings, updateSettings, resetSettings, defaults } = useArbitrageSettings();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -30,6 +33,12 @@ export default function DashboardPage() {
       <main className="container mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-8">
         {/* Controls */}
         <div className="flex items-center justify-end gap-2">
+          <ArbitrageSettingsPanel
+            settings={settings}
+            updateSettings={updateSettings}
+            resetSettings={resetSettings}
+            defaults={defaults}
+          />
           <Button
             variant={isPriceUpdating ? "destructive" : "default"}
             size="sm"
