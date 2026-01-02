@@ -7,6 +7,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { MarketsProvider } from "@/contexts/MarketsContext";
 import LoginPage from "./pages/Login";
 import DashboardPage from "./pages/Dashboard";
+import SportsArbitragePage from "./pages/SportsArbitrage";
 import NotFound from "./pages/NotFound";
 
 // Force rebuild v2
@@ -18,6 +19,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<LoginPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
+      <Route path="/sports" element={<SportsArbitragePage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
