@@ -111,32 +111,33 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
         </Card>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-4">
+      {/* Compact Stats Grid - Mobile First */}
+      <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-3">
         {/* Total Markets */}
-        <Card className="border-border shadow-sm">
-          <CardContent className="p-3 sm:p-5">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <div className="p-1.5 sm:p-2.5 rounded-lg bg-primary/10">
+        <Card className="border-border shadow-sm col-span-2 sm:col-span-1">
+          <CardContent className="p-2.5 sm:p-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="p-1.5 sm:p-2 rounded-lg bg-primary/10 shrink-0">
                 <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
               </div>
               <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.totalMarkets.toLocaleString()}</p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Markets</p>
+                <p className="text-base sm:text-xl font-semibold text-foreground">{summary.totalMarkets.toLocaleString()}</p>
+                <p className="text-[9px] sm:text-xs text-muted-foreground font-medium">Markets</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
         {/* Total Contracts */}
-        <Card className="border-border shadow-sm">
-          <CardContent className="p-3 sm:p-5">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <div className="p-1.5 sm:p-2.5 rounded-lg bg-chart-3/10">
+        <Card className="border-border shadow-sm col-span-2 sm:col-span-1">
+          <CardContent className="p-2.5 sm:p-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="p-1.5 sm:p-2 rounded-lg bg-chart-3/10 shrink-0">
                 <FileStack className="w-4 h-4 sm:w-5 sm:h-5 text-chart-3" />
               </div>
               <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.totalContracts.toLocaleString()}</p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Contracts</p>
+                <p className="text-base sm:text-xl font-semibold text-foreground">{summary.totalContracts.toLocaleString()}</p>
+                <p className="text-[9px] sm:text-xs text-muted-foreground font-medium">Contracts</p>
               </div>
             </div>
           </CardContent>
@@ -144,14 +145,14 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
 
         {/* Polymarket Count */}
         <Card className="border-border shadow-sm">
-          <CardContent className="p-3 sm:p-5">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <div className="p-1.5 sm:p-2.5 rounded-lg bg-chart-1/10">
-                <CircleDot className="w-4 h-4 sm:w-5 sm:h-5 text-chart-1" />
+          <CardContent className="p-2.5 sm:p-4">
+            <div className="flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3">
+              <div className="p-1.5 sm:p-2 rounded-lg bg-gradient-to-br from-purple-500/20 to-indigo-600/10 shrink-0">
+                <CircleDot className="w-4 h-4 sm:w-5 sm:h-5 text-purple-500" />
               </div>
-              <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.polymarketCount.toLocaleString()}</p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Poly</p>
+              <div className="text-center sm:text-left">
+                <p className="text-sm sm:text-xl font-semibold text-foreground">{summary.polymarketCount.toLocaleString()}</p>
+                <p className="text-[9px] sm:text-xs text-muted-foreground font-medium">Poly</p>
               </div>
             </div>
           </CardContent>
@@ -159,31 +160,29 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
 
         {/* Kalshi Count */}
         <Card className="border-border shadow-sm">
-          <CardContent className="p-3 sm:p-5">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <div className="p-1.5 sm:p-2.5 rounded-lg bg-chart-2/10">
-                <CircleDot className="w-4 h-4 sm:w-5 sm:h-5 text-chart-2" />
+          <CardContent className="p-2.5 sm:p-4">
+            <div className="flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3">
+              <div className="p-1.5 sm:p-2 rounded-lg bg-gradient-to-br from-blue-500/20 to-cyan-500/10 shrink-0">
+                <CircleDot className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
               </div>
-              <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.kalshiCount.toLocaleString()}</p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Kalshi</p>
+              <div className="text-center sm:text-left">
+                <p className="text-sm sm:text-xl font-semibold text-foreground">{summary.kalshiCount.toLocaleString()}</p>
+                <p className="text-[9px] sm:text-xs text-muted-foreground font-medium">Kalshi</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
         {/* Matched Pairs */}
-        <Card className="border-border shadow-sm border-green-500/30">
-          <CardContent className="p-3 sm:p-5">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <div className="p-1.5 sm:p-2.5 rounded-lg bg-green-500/10">
-                <Link2 className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" />
+        <Card className="border-chart-4/30 shadow-sm bg-chart-4/5">
+          <CardContent className="p-2.5 sm:p-4">
+            <div className="flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3">
+              <div className="p-1.5 sm:p-2 rounded-lg bg-chart-4/20 shrink-0">
+                <Link2 className="w-4 h-4 sm:w-5 sm:h-5 text-chart-4" />
               </div>
-              <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.matchedMarkets}</p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">
-                  Matched ({summary.matchCoveragePercent.toFixed(1)}%)
-                </p>
+              <div className="text-center sm:text-left">
+                <p className="text-sm sm:text-xl font-semibold text-chart-4">{summary.matchedMarkets}</p>
+                <p className="text-[9px] sm:text-xs text-muted-foreground font-medium">Matched</p>
               </div>
             </div>
           </CardContent>
@@ -191,20 +190,20 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
 
         {/* Last Discovery */}
         <Card className="border-border shadow-sm">
-          <CardContent className="p-3 sm:p-5">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <div className="p-1.5 sm:p-2.5 rounded-lg bg-muted">
+          <CardContent className="p-2.5 sm:p-4">
+            <div className="flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3">
+              <div className="p-1.5 sm:p-2 rounded-lg bg-muted shrink-0">
                 {isRunning ? (
                   <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 text-primary animate-spin" />
                 ) : (
                   <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground" />
                 )}
               </div>
-              <div className="min-w-0">
-                <p className="text-xs sm:text-sm font-semibold text-foreground truncate">
+              <div className="text-center sm:text-left min-w-0">
+                <p className="text-[10px] sm:text-sm font-semibold text-foreground truncate">
                   {isRunning ? 'Syncing' : formatTime(summary.lastDiscoveryTime)}
                 </p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium">Sync</p>
+                <p className="text-[9px] sm:text-xs text-muted-foreground font-medium">Sync</p>
               </div>
             </div>
           </CardContent>
@@ -212,9 +211,9 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
 
         {/* Connection Mode */}
         <Card className="border-border shadow-sm">
-          <CardContent className="p-3 sm:p-5">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <div className={`p-1.5 sm:p-2.5 rounded-lg ${
+          <CardContent className="p-2.5 sm:p-4">
+            <div className="flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3">
+              <div className={`p-1.5 sm:p-2 rounded-lg shrink-0 ${
                 summary.connectionMode === 'polling' 
                   ? 'bg-chart-1/10' 
                   : summary.connectionMode === 'websocket' 
@@ -229,11 +228,11 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
                     : 'text-destructive'
                 }`} />
               </div>
-              <div className="min-w-0">
-                <p className="text-xs sm:text-sm font-semibold text-foreground capitalize truncate">
+              <div className="text-center sm:text-left min-w-0">
+                <p className="text-[10px] sm:text-sm font-semibold text-foreground capitalize truncate">
                   {summary.connectionMode}
                 </p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium">Mode</p>
+                <p className="text-[9px] sm:text-xs text-muted-foreground font-medium">Mode</p>
               </div>
             </div>
           </CardContent>
@@ -241,22 +240,20 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
 
         {/* Requests Per Minute */}
         <Card className="border-border shadow-sm">
-          <CardContent className="p-3 sm:p-5">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <div className={`p-1.5 sm:p-2.5 rounded-lg ${hasErrors ? 'bg-destructive/10' : 'bg-primary/10'}`}>
+          <CardContent className="p-2.5 sm:p-4">
+            <div className="flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3">
+              <div className={`p-1.5 sm:p-2 rounded-lg shrink-0 ${hasErrors ? 'bg-destructive/10' : 'bg-primary/10'}`}>
                 {hasErrors ? (
                   <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-destructive" />
                 ) : (
                   <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
                 )}
               </div>
-              <div className="min-w-0">
-                <p className="text-xs sm:text-sm font-semibold text-foreground truncate">
-                  {hasErrors ? 'Error' : `${liveRpm || summary.requestsPerMinute}/m`}
+              <div className="text-center sm:text-left min-w-0">
+                <p className="text-[10px] sm:text-sm font-semibold text-foreground truncate">
+                  {hasErrors ? 'Err' : `${liveRpm || summary.requestsPerMinute}`}
                 </p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium">
-                  {hasErrors ? 'Error' : 'RPM'}
-                </p>
+                <p className="text-[9px] sm:text-xs text-muted-foreground font-medium">RPM</p>
               </div>
             </div>
           </CardContent>
