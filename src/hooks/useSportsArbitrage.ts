@@ -322,22 +322,25 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       );
 
       if (response.status === 404) {
+        setError(`No sports contracts found for ${dateStr}. Try a different date.`);
         return {};
       }
 
       if (!response.ok) {
-        if (response.status === 400) {
-          const errorData = await response.json().catch(() => ({}));
-          console.warn('Matching markets API error:', errorData);
-          return {};
-        }
-        throw new Error(`API error: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        const message =
+          (typeof errorData?.message === 'string' && errorData.message) ||
+          (typeof errorData?.error === 'string' && errorData.error) ||
+          `API error: HTTP ${response.status}`;
+        setError(message);
+        return {};
       }
 
       const data = await response.json();
       return data.markets || {};
     } catch (err) {
-      console.error('Failed to fetch matching markets:', err);
+      const message = err instanceof Error ? err.message : 'Failed to fetch matching markets';
+      setError(message);
       throw err;
     }
   }, [getApiKey, sport, date]);
@@ -484,7 +487,7 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       const matchesData = await fetchMatchingMarkets();
 
       const pairs: MatchedMarketPair[] = [];
-      
+
       for (const [key, platformsArray] of Object.entries(matchesData)) {
         const platforms = platformsArray as Array<{
           platform: 'KALSHI' | 'POLYMARKET';
@@ -493,10 +496,10 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
           market_slug?: string;
           token_ids?: string[];
         }>;
-        
+
         const kalshiData = platforms.find(p => p.platform === 'KALSHI');
         const polyData = platforms.find(p => p.platform === 'POLYMARKET');
-        
+
         if (kalshiData) {
           pairs.push({
             kalshi: {
@@ -521,6 +524,10 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       }
 
       setMatchedPairs(pairs);
+
+      if (pairs.length === 0) {
+        setError(prev => prev ?? 'No matched sports contracts for this sport/date. Try another date.');
+      }
 
       if (pairs.length > 0) {
         setIsFetchingPrices(true);
