@@ -51,38 +51,45 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background">
       <DashboardHeader onLogout={logout} />
       
-      <main className="container mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-8">
-        {/* Controls */}
-        <div className="flex items-center justify-end gap-2">
-          <ArbitrageSettingsPanel
-            settings={settings}
-            updateSettings={updateSettings}
-            resetSettings={resetSettings}
-            defaults={defaults}
-          />
-          <Button
-            variant={isRunning ? "destructive" : "default"}
-            size="sm"
-            onClick={isRunning ? handleStopAll : handleStartAll}
-          >
-            {isRunning ? (
-              <>
-                <Pause className="w-4 h-4 mr-2" />
-                Stop Fetching
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4 mr-2" />
-                Start Fetching
-              </>
-            )}
-          </Button>
+      <main className="container mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-6">
+        {/* Controls - More prominent */}
+        <div className="flex items-center justify-between gap-4 p-4 rounded-lg bg-card border">
+          <div>
+            <h2 className="text-lg font-semibold">Market Scanner</h2>
+            <p className="text-sm text-muted-foreground">
+              {isRunning ? 'Scanning for arbitrage opportunities...' : 'Start scanning to find opportunities'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <ArbitrageSettingsPanel
+              settings={settings}
+              updateSettings={updateSettings}
+              resetSettings={resetSettings}
+              defaults={defaults}
+            />
+            <Button
+              variant={isRunning ? "destructive" : "default"}
+              onClick={isRunning ? handleStopAll : handleStartAll}
+            >
+              {isRunning ? (
+                <>
+                  <Pause className="w-4 h-4 mr-2" />
+                  Stop
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4 mr-2" />
+                  Start Scanning
+                </>
+              )}
+            </Button>
+          </div>
         </div>
 
         {/* Summary Cards - shows sync progress */}
         <SummaryCards summary={summary} syncState={syncState} />
         
-        {/* Arbitrage View Only */}
+        {/* Arbitrage View */}
         <ArbitrageView />
       </main>
     </div>
