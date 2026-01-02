@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useArbitrage } from '@/hooks/useArbitrage';
 import { useMarkets } from '@/contexts/MarketsContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, Percent, RefreshCw, Zap, Timer, ArrowUpDown } from 'lucide-react';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 type SortOption = 'profit' | 'expiration' | 'freshness';
@@ -70,25 +71,42 @@ function ArbitrageCard({ opportunity, maxAgeSeconds }: { opportunity: ArbitrageO
   const kalshiUrl = match.kalshi.kalshiEventTicker 
     ? `https://kalshi.com/markets/${match.kalshi.kalshiEventTicker}` 
     : '#';
+
+  // Determine profit tier for color coding
+  const getProfitTierStyle = (percent: number) => {
+    if (percent >= 5) return 'bg-green-600 text-white';
+    if (percent >= 2) return 'bg-green-500/80 text-white';
+    return 'bg-green-500/60 text-white';
+  };
   
   return (
-    <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
+    <Card className="border-green-500/30 bg-gradient-to-br from-green-500/5 to-transparent hover:border-green-500/50 transition-colors">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Target className="w-5 h-5 text-primary" />
-            <Badge variant="default" className="bg-green-600 hover:bg-green-700">
-              LOCKED ARBITRAGE
-            </Badge>
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2">
+              <Badge className={getProfitTierStyle(profitPercent)}>
+                <TrendingUp className="w-3 h-3 mr-1" />
+                {formatProfitPercent(profitPercent)} PROFIT
+              </Badge>
+            </div>
+            <CardTitle className="text-base sm:text-lg leading-tight line-clamp-2">
+              {match.polymarket.title}
+            </CardTitle>
           </div>
-          <Badge variant="outline" className="text-green-600 border-green-600 font-bold text-lg">
-            {formatProfitPercent(profitPercent)}
-          </Badge>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button variant="outline" size="sm" asChild className="h-7 px-2.5">
+              <a href={kalshiUrl} target="_blank" rel="noopener noreferrer">
+                Kalshi <ExternalLink className="w-3 h-3 ml-1" />
+              </a>
+            </Button>
+            <Button variant="outline" size="sm" asChild className="h-7 px-2.5">
+              <a href={polymarketUrl} target="_blank" rel="noopener noreferrer">
+                Poly <ExternalLink className="w-3 h-3 ml-1" />
+              </a>
+            </Button>
+          </div>
         </div>
-        <CardTitle className="text-base sm:text-lg leading-tight mt-2">
-          {match.polymarket.title}
-        </CardTitle>
-        {/* Freshness Badge */}
         <FreshnessBadge 
           polymarket={match.polymarket.lastPriceUpdatedAt} 
           kalshi={match.kalshi.lastPriceUpdatedAt}
@@ -97,63 +115,63 @@ function ArbitrageCard({ opportunity, maxAgeSeconds }: { opportunity: ArbitrageO
       </CardHeader>
       
       <CardContent className="space-y-4">
-        {/* Trade Instructions */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="p-3 rounded-lg bg-muted/50 border">
-            <p className="text-xs text-muted-foreground mb-1">BUY YES on</p>
-            <div className="flex items-center justify-between">
-              <span className="font-semibold">{buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</span>
-              <span className="text-lg font-bold text-primary">{formatCents(yesPlatformPrice)}</span>
+        {/* Trade Instructions - More prominent */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center">
+                <span className="text-xs font-bold text-green-600">1</span>
+              </div>
+              <span className="text-xs font-medium text-muted-foreground">BUY YES</span>
             </div>
+            <p className="font-semibold text-sm">{buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</p>
+            <p className="text-2xl font-bold text-primary">{formatCents(yesPlatformPrice)}</p>
           </div>
-          <div className="p-3 rounded-lg bg-muted/50 border">
-            <p className="text-xs text-muted-foreground mb-1">BUY NO on</p>
-            <div className="flex items-center justify-between">
-              <span className="font-semibold">{buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</span>
-              <span className="text-lg font-bold text-primary">{formatCents(noPlatformPrice)}</span>
+          <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center">
+                <span className="text-xs font-bold text-green-600">2</span>
+              </div>
+              <span className="text-xs font-medium text-muted-foreground">BUY NO</span>
             </div>
+            <p className="font-semibold text-sm">{buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</p>
+            <p className="text-2xl font-bold text-primary">{formatCents(noPlatformPrice)}</p>
           </div>
         </div>
         
-        {/* Profit Summary */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          <div className="flex items-center gap-1.5">
-            <TrendingUp className="w-4 h-4 text-muted-foreground" />
-            <span>Cost: <strong>{formatCents(combinedCost)}</strong></span>
+        {/* Profit Summary - Cleaner */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg bg-muted/50 text-sm">
+          <div className="flex items-center gap-4">
+            <div>
+              <span className="text-muted-foreground">Cost:</span>
+              <span className="ml-1 font-semibold">{formatCents(combinedCost)}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Payout:</span>
+              <span className="ml-1 font-semibold">$1.00</span>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <Percent className="w-4 h-4 text-muted-foreground" />
-            <span>Payout: <strong>$1.00</strong></span>
-          </div>
-          <div className="flex items-center gap-1.5 text-green-600">
-            <span>Profit: <strong>${profitPerDollar.toFixed(4)}</strong> per contract</span>
+          <div className="text-green-600 font-semibold">
+            +${profitPerDollar.toFixed(3)}/contract
           </div>
         </div>
         
         {/* Footer */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+        <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t">
+          <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <Clock className="w-3.5 h-3.5" />
               <span>Expires {formatDistanceToNow(expirationDate, { addSuffix: true })}</span>
             </div>
-            <div>
-              Match: <span className="font-medium">{Math.round(match.matchScore * 100)}%</span>
-            </div>
+            <span>•</span>
+            <span>Match: {Math.round(match.matchScore * 100)}%</span>
           </div>
-          
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <a href={kalshiUrl} target="_blank" rel="noopener noreferrer">
-                Kalshi <ExternalLink className="w-3 h-3 ml-1" />
-              </a>
+          <Link to={`/calculator?kalshi=${Math.round(yesPlatformPrice * 100)}&poly=${Math.round(noPlatformPrice * 100)}`}>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
+              <Calculator className="w-3 h-3 mr-1" />
+              Calculate
             </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a href={polymarketUrl} target="_blank" rel="noopener noreferrer">
-                Polymarket <ExternalLink className="w-3 h-3 ml-1" />
-              </a>
-            </Button>
-          </div>
+          </Link>
         </div>
       </CardContent>
     </Card>
@@ -280,21 +298,21 @@ export function ArbitrageView() {
       <Card className="border-border bg-muted/30">
         <CardContent className="py-3 px-4">
           <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
-            <div className="flex items-center gap-6">
-              <div>
+            <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+              <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">Scanned:</span>
-                <span className="ml-2 font-medium">{summary.polymarketCount.toLocaleString()} Poly</span>
-                <span className="mx-1 text-muted-foreground">/</span>
-                <span className="font-medium">{summary.kalshiCount.toLocaleString()} Kalshi</span>
+                <Badge variant="secondary" className="font-mono">
+                  {summary.polymarketCount.toLocaleString()} Poly
+                </Badge>
+                <Badge variant="secondary" className="font-mono">
+                  {summary.kalshiCount.toLocaleString()} Kalshi
+                </Badge>
               </div>
-              <div>
-                <span className="text-muted-foreground">Contracts:</span>
-                <span className="ml-2 font-medium">{summary.totalContracts.toLocaleString()}</span>
-              </div>
-              <div className="text-green-600">
+              <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">Matched:</span>
-                <span className="ml-2 font-bold">{summary.matchedMarkets} pairs</span>
-                <span className="ml-1 text-xs">({summary.matchCoveragePercent.toFixed(1)}%)</span>
+                <Badge variant="default" className="bg-green-600 font-mono">
+                  {summary.matchedMarkets} pairs
+                </Badge>
               </div>
             </div>
           </div>
@@ -303,14 +321,20 @@ export function ArbitrageView() {
 
       {/* Controls Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <div className="flex items-center gap-3">
-          <span className={freshOpportunities.length > 0 ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
-            Active: <strong className="text-lg">{freshOpportunities.length}</strong>
-          </span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Target className="w-4 h-4 text-green-600" />
+            <span className="font-medium">
+              Active Opportunities: 
+              <span className={`ml-1 text-lg ${freshOpportunities.length > 0 ? 'text-green-600 font-bold' : 'text-muted-foreground'}`}>
+                {freshOpportunities.length}
+              </span>
+            </span>
+          </div>
           
           {freshOpportunities.length > 1 && (
             <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
-              <SelectTrigger className="w-[140px] h-8 text-xs">
+              <SelectTrigger className="w-[150px] h-8 text-xs">
                 <ArrowUpDown className="w-3 h-3 mr-1" />
                 <SelectValue />
               </SelectTrigger>
@@ -328,12 +352,13 @@ export function ArbitrageView() {
           size="sm" 
           onClick={refreshKalshiPrices}
           disabled={isRefreshingKalshi}
+          className="shrink-0"
         >
-          <Zap className={`w-3 h-3 mr-1 ${isRefreshingKalshi ? 'animate-pulse' : ''}`} />
+          <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingKalshi ? 'animate-pulse text-primary' : ''}`} />
           Refresh Kalshi
           {lastKalshiRefresh && (
-            <span className="text-muted-foreground ml-1">
-              ({formatAge(lastKalshiRefresh)})
+            <span className="text-muted-foreground ml-1.5 text-xs">
+              {formatAge(lastKalshiRefresh)}
             </span>
           )}
         </Button>
@@ -367,13 +392,25 @@ export function ArbitrageView() {
           </CardContent>
         </Card>
       ) : (
-        <Card className="border-dashed">
-          <CardContent className="py-8 text-center">
-            <Target className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No Arbitrage Opportunities</h3>
-            <p className="text-muted-foreground text-sm max-w-md mx-auto">
-              Scanning for price discrepancies across platforms…
+        <Card className="border-dashed border-muted-foreground/20">
+          <CardContent className="py-12 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
+              <Search className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">No Arbitrage Opportunities Yet</h3>
+            <p className="text-muted-foreground text-sm max-w-md mx-auto mb-4">
+              {summary.matchedMarkets > 0 
+                ? `Monitoring ${summary.matchedMarkets} matched market pairs for price discrepancies...`
+                : 'Start the scanner to discover and match markets across platforms.'}
             </p>
+            <div className="flex items-center justify-center gap-3">
+              <Link to="/calculator">
+                <Button variant="outline" size="sm">
+                  <Calculator className="w-4 h-4 mr-2" />
+                  Try Calculator
+                </Button>
+              </Link>
+            </div>
           </CardContent>
         </Card>
       )}

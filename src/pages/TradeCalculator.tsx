@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,11 +11,21 @@ import { ArrowRight, DollarSign, TrendingUp, AlertTriangle } from 'lucide-react'
 
 export default function TradeCalculator() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  
   const [kalshiPrice, setKalshiPrice] = useState<string>('45');
   const [kalshiSide, setKalshiSide] = useState<'YES' | 'NO'>('YES');
   const [polyPrice, setPolyPrice] = useState<string>('58');
   const [polySide, setPolySide] = useState<'YES' | 'NO'>('YES');
   const [portfolio, setPortfolio] = useState<string>('100');
+
+  // Initialize from URL params if present
+  useEffect(() => {
+    const kalshiParam = searchParams.get('kalshi');
+    const polyParam = searchParams.get('poly');
+    if (kalshiParam) setKalshiPrice(kalshiParam);
+    if (polyParam) setPolyPrice(polyParam);
+  }, [searchParams]);
 
   const handleLogout = () => {
     navigate('/');
