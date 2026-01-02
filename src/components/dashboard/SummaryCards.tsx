@@ -10,7 +10,9 @@ import {
   AlertCircle,
   Loader2,
   TrendingUp,
-  Search
+  Search,
+  Link2,
+  FileStack
 } from 'lucide-react';
 
 interface SummaryCardsProps {
@@ -109,7 +111,7 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
         </Card>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-4">
         {/* Total Markets */}
         <Card className="border-border shadow-sm">
           <CardContent className="p-3 sm:p-5">
@@ -118,8 +120,23 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
                 <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
               </div>
               <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.totalMarkets}</p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Total</p>
+                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.totalMarkets.toLocaleString()}</p>
+                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Markets</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Total Contracts */}
+        <Card className="border-border shadow-sm">
+          <CardContent className="p-3 sm:p-5">
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="p-1.5 sm:p-2.5 rounded-lg bg-chart-3/10">
+                <FileStack className="w-4 h-4 sm:w-5 sm:h-5 text-chart-3" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.totalContracts.toLocaleString()}</p>
+                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Contracts</p>
               </div>
             </div>
           </CardContent>
@@ -133,7 +150,7 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
                 <CircleDot className="w-4 h-4 sm:w-5 sm:h-5 text-chart-1" />
               </div>
               <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.polymarketCount}</p>
+                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.polymarketCount.toLocaleString()}</p>
                 <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Poly</p>
               </div>
             </div>
@@ -148,8 +165,25 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
                 <CircleDot className="w-4 h-4 sm:w-5 sm:h-5 text-chart-2" />
               </div>
               <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.kalshiCount}</p>
+                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.kalshiCount.toLocaleString()}</p>
                 <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">Kalshi</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Matched Pairs */}
+        <Card className="border-border shadow-sm border-green-500/30">
+          <CardContent className="p-3 sm:p-5">
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="p-1.5 sm:p-2.5 rounded-lg bg-green-500/10">
+                <Link2 className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-lg sm:text-2xl font-semibold text-foreground">{summary.matchedMarkets}</p>
+                <p className="text-[10px] sm:text-xs text-muted-foreground font-medium truncate">
+                  Matched ({summary.matchCoveragePercent.toFixed(1)}%)
+                </p>
               </div>
             </div>
           </CardContent>

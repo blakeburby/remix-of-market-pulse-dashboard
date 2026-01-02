@@ -231,7 +231,7 @@ export function ArbitrageView() {
     settings,
   } = useArbitrage();
   
-  const { refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh } = useMarkets();
+  const { refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary } = useMarkets();
   const [sortBy, setSortBy] = useState<SortOption>('profit');
 
   const sortedOpportunities = useMemo(() => {
@@ -276,6 +276,31 @@ export function ArbitrageView() {
   
   return (
     <div className="space-y-6">
+      {/* Scan Coverage Header */}
+      <Card className="border-border bg-muted/30">
+        <CardContent className="py-3 px-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
+            <div className="flex items-center gap-6">
+              <div>
+                <span className="text-muted-foreground">Scanned:</span>
+                <span className="ml-2 font-medium">{summary.polymarketCount.toLocaleString()} Poly</span>
+                <span className="mx-1 text-muted-foreground">/</span>
+                <span className="font-medium">{summary.kalshiCount.toLocaleString()} Kalshi</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Contracts:</span>
+                <span className="ml-2 font-medium">{summary.totalContracts.toLocaleString()}</span>
+              </div>
+              <div className="text-green-600">
+                <span className="text-muted-foreground">Matched:</span>
+                <span className="ml-2 font-bold">{summary.matchedMarkets} pairs</span>
+                <span className="ml-1 text-xs">({summary.matchCoveragePercent.toFixed(1)}%)</span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Controls Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
         <div className="flex items-center gap-3">
