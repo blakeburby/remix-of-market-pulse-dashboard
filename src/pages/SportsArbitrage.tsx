@@ -229,8 +229,10 @@ function MatchedPairCard({
   pair: MatchedMarketPair;
   onRetry: () => void;
 }) {
-  const marketTicker = pair.kalshi.market_tickers[0];
-  const kalshiUrl = `https://kalshi.com/markets/${pair.kalshi.event_ticker.toLowerCase()}/${marketTicker.toLowerCase()}`;
+  const marketTicker = pair.kalshi.market_tickers[0] ?? '';
+  const kalshiUrl = marketTicker
+    ? `https://kalshi.com/markets/${pair.kalshi.event_ticker.toLowerCase()}/${marketTicker.toLowerCase()}`
+    : `https://kalshi.com/markets/${pair.kalshi.event_ticker.toLowerCase()}`;
   const polymarketUrl = pair.polymarket 
     ? `https://polymarket.com/event/${pair.polymarket.market_slug}`
     : null;
