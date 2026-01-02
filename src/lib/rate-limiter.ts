@@ -139,5 +139,5 @@ export class RateLimiter {
   }
 }
 
-// Global rate limiter instance
-export const globalRateLimiter = new RateLimiter('free');
+// Global rate limiter instance - defaults to 'dev' tier based on typical API keys
+export const globalRateLimiter = new RateLimiter('dev');
