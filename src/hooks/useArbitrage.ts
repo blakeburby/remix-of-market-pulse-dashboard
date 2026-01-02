@@ -99,6 +99,14 @@ function filterFreshOpportunities(
 }
 
 /**
+ * Filter out expired opportunities
+ */
+function filterExpired(opportunities: ArbitrageOpportunity[]): ArbitrageOpportunity[] {
+  const now = new Date();
+  return opportunities.filter(opp => opp.expirationDate > now);
+}
+
+/**
  * Filter opportunities by minimum profit threshold
  */
 function filterByProfitThreshold(
@@ -143,7 +151,10 @@ export function useArbitrage(): UseArbitrageResult {
     );
     
     // Find all arbitrage opportunities (unfiltered)
-    const opportunities = findArbitrageOpportunities(matches);
+    const allOpportunities = findArbitrageOpportunities(matches);
+    
+    // Filter out expired opportunities first
+    const opportunities = filterExpired(allOpportunities);
     
     // Filter to only fresh opportunities
     const freshByTime = filterFreshOpportunities(
