@@ -183,21 +183,39 @@ function MatchedPairCard({ pair }: { pair: MatchedMarketPair }) {
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div className="p-2 rounded bg-muted/50 text-center">
             <p className="text-xs text-muted-foreground">Kalshi</p>
-            <p className="font-bold">
-              {pair.kalshiPrices 
-                ? `${formatCents(pair.kalshiPrices.yesPrice)} / ${formatCents(pair.kalshiPrices.noPrice)}`
-                : 'Loading...'
-              }
-            </p>
+            {pair.kalshiPrices ? (
+              <p className="font-bold">
+                {formatCents(pair.kalshiPrices.yesPrice)} / {formatCents(pair.kalshiPrices.noPrice)}
+              </p>
+            ) : pair.kalshiError ? (
+              <p className="text-xs text-destructive flex items-center justify-center gap-1">
+                <AlertCircle className="w-3 h-3" />
+                {pair.kalshiError.status ? `Error ${pair.kalshiError.status}` : pair.kalshiError.message}
+              </p>
+            ) : pair.pricesFetched ? (
+              <p className="text-xs text-muted-foreground">No price</p>
+            ) : (
+              <p className="font-bold">Loading...</p>
+            )}
           </div>
           <div className="p-2 rounded bg-muted/50 text-center">
             <p className="text-xs text-muted-foreground">Polymarket</p>
-            <p className="font-bold">
-              {pair.polymarketPrices 
-                ? `${formatCents(pair.polymarketPrices.yesPrice)} / ${formatCents(pair.polymarketPrices.noPrice)}`
-                : pair.polymarket ? 'Loading...' : '—'
-              }
-            </p>
+            {pair.polymarketPrices ? (
+              <p className="font-bold">
+                {formatCents(pair.polymarketPrices.yesPrice)} / {formatCents(pair.polymarketPrices.noPrice)}
+              </p>
+            ) : pair.polymarketError ? (
+              <p className="text-xs text-destructive flex items-center justify-center gap-1">
+                <AlertCircle className="w-3 h-3" />
+                {pair.polymarketError.status ? `Error ${pair.polymarketError.status}` : pair.polymarketError.message}
+              </p>
+            ) : !pair.polymarket ? (
+              <p className="font-bold">—</p>
+            ) : pair.pricesFetched ? (
+              <p className="text-xs text-muted-foreground">No price</p>
+            ) : (
+              <p className="font-bold">Loading...</p>
+            )}
           </div>
         </div>
 

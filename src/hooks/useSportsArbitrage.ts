@@ -5,6 +5,11 @@ import { format } from 'date-fns';
 
 export type SportType = 'nfl' | 'nba' | 'mlb' | 'nhl' | 'cfb' | 'cbb';
 
+export interface PriceError {
+  status: number | null;
+  message: string;
+}
+
 export interface MatchedMarketPair {
   kalshi: {
     platform: 'KALSHI';
@@ -21,10 +26,13 @@ export interface MatchedMarketPair {
     yesPrice: number;
     noPrice: number;
   } | null;
+  kalshiError: PriceError | null;
   polymarketPrices: {
     yesPrice: number;
     noPrice: number;
   } | null;
+  polymarketError: PriceError | null;
+  pricesFetched: boolean;
 }
 
 export interface SportsArbitrageOpportunity {
@@ -72,8 +80,11 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
+  // Result type for price fetches
+  type PriceResult = { price: number } | { error: PriceError };
+
   // Fetch a single Polymarket token price
-  const fetchPolymarketPrice = useCallback(async (tokenId: string, apiKey: string): Promise<number | null> => {
+  const fetchPolymarketPrice = useCallback(async (tokenId: string, apiKey: string): Promise<PriceResult> => {
     try {
       const response = await fetch(
         `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
@@ -86,18 +97,22 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       );
 
       if (!response.ok) {
-        return null;
+        return { error: { status: response.status, message: `HTTP ${response.status}` } };
       }
 
       const data = await response.json();
-      return data.price ?? null;
-    } catch {
-      return null;
+      const price = data.price ?? null;
+      if (typeof price !== 'number') {
+        return { error: { status: null, message: 'Invalid response' } };
+      }
+      return { price };
+    } catch (err) {
+      return { error: { status: null, message: err instanceof Error ? err.message : 'Network error' } };
     }
   }, []);
 
   // Fetch Kalshi market price (returns cents 0-100)
-  const fetchKalshiPrice = useCallback(async (marketTicker: string, apiKey: string): Promise<number | null> => {
+  const fetchKalshiPrice = useCallback(async (marketTicker: string, apiKey: string): Promise<PriceResult> => {
     const safeTicker = encodeURIComponent(marketTicker);
 
     try {
@@ -109,8 +124,7 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       });
 
       if (!response.ok) {
-        console.warn(`Failed to fetch Kalshi price for ${marketTicker}: ${response.status}`);
-        return null;
+        return { error: { status: response.status, message: `HTTP ${response.status}` } };
       }
 
       const data = await response.json();
@@ -128,13 +142,13 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
 
       if (typeof price !== 'number') {
         console.warn('Unexpected Kalshi price payload:', data);
-        return null;
+        return { error: { status: null, message: 'Invalid response format' } };
       }
 
-      return price;
+      return { price };
     } catch (err) {
       console.warn(`Error fetching Kalshi price for ${marketTicker}:`, err);
-      return null;
+      return { error: { status: null, message: err instanceof Error ? err.message : 'Network error' } };
     }
   }, []);
 
@@ -192,36 +206,51 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
         await new Promise(resolve => setTimeout(resolve, index * 50));
         
         let kalshiPrices: { yesPrice: number; noPrice: number } | null = null;
+        let kalshiError: PriceError | null = null;
         let polymarketPrices: { yesPrice: number; noPrice: number } | null = null;
+        let polymarketError: PriceError | null = null;
 
         // Fetch Kalshi price (first market ticker is YES)
         if (pair.kalshi.market_tickers.length >= 1) {
-          const yesPrice = await fetchKalshiPrice(pair.kalshi.market_tickers[0], apiKey);
-          if (yesPrice !== null) {
+          const result = await fetchKalshiPrice(pair.kalshi.market_tickers[0], apiKey);
+          if ('price' in result) {
             kalshiPrices = {
-              yesPrice: yesPrice / 100, // Convert cents to decimal
-              noPrice: 1 - (yesPrice / 100),
+              yesPrice: result.price / 100, // Convert cents to decimal
+              noPrice: 1 - (result.price / 100),
             };
+          } else {
+            kalshiError = result.error;
           }
+        } else {
+          kalshiError = { status: null, message: 'No market ticker' };
         }
 
         // Fetch Polymarket prices
         if (pair.polymarket && pair.polymarket.token_ids.length >= 2) {
           const [yesTokenId, noTokenId] = pair.polymarket.token_ids;
-          const [yesPrice, noPrice] = await Promise.all([
+          const [yesResult, noResult] = await Promise.all([
             fetchPolymarketPrice(yesTokenId, apiKey),
             fetchPolymarketPrice(noTokenId, apiKey),
           ]);
 
-          if (yesPrice !== null && noPrice !== null) {
-            polymarketPrices = { yesPrice, noPrice };
+          if ('price' in yesResult && 'price' in noResult) {
+            polymarketPrices = { yesPrice: yesResult.price, noPrice: noResult.price };
+          } else {
+            const errorMsg = 'error' in yesResult ? yesResult.error.message : ('error' in noResult ? noResult.error.message : 'Unknown error');
+            const errorStatus = 'error' in yesResult ? yesResult.error.status : ('error' in noResult ? noResult.error.status : null);
+            polymarketError = { status: errorStatus, message: errorMsg };
           }
+        } else if (pair.polymarket) {
+          polymarketError = { status: null, message: 'Missing token IDs' };
         }
 
         return {
           ...pair,
           kalshiPrices,
+          kalshiError,
           polymarketPrices,
+          polymarketError,
+          pricesFetched: true,
         };
       })
     );
@@ -266,7 +295,10 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
               token_ids: polyData.token_ids || [],
             } : null,
             kalshiPrices: null,
+            kalshiError: null,
             polymarketPrices: null,
+            polymarketError: null,
+            pricesFetched: false,
           });
         }
       }
