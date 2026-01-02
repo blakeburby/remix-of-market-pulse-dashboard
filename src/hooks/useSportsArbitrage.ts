@@ -376,13 +376,20 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     }
 
     // Process Polymarket result
+    // In binary sports markets, token_ids[0] and token_ids[1] are YES prices for Team A and Team B
+    // For Team A: YES = token_ids[0], NO = 1 - token_ids[0] (since if A doesn't win, B wins)
     if (polyResults) {
-      const [yesResult, noResult] = polyResults;
-      if ('price' in yesResult && 'price' in noResult) {
-        polymarketPrices = { yesPrice: yesResult.price, noPrice: noResult.price };
+      const [teamAResult, teamBResult] = polyResults;
+      if ('price' in teamAResult && 'price' in teamBResult) {
+        // Using token[0] as YES, token[1] as the opposite team's YES (= our NO)
+        // In a binary market: NO for Team A = YES for Team B
+        polymarketPrices = { 
+          yesPrice: teamAResult.price, 
+          noPrice: teamBResult.price  // This is Team B's YES = Team A's NO
+        };
       } else {
-        const errorMsg = 'error' in yesResult ? yesResult.error.message : ('error' in noResult ? noResult.error.message : 'Unknown error');
-        const errorStatus = 'error' in yesResult ? yesResult.error.status : ('error' in noResult ? noResult.error.status : null);
+        const errorMsg = 'error' in teamAResult ? teamAResult.error.message : ('error' in teamBResult ? teamBResult.error.message : 'Unknown error');
+        const errorStatus = 'error' in teamAResult ? teamAResult.error.status : ('error' in teamBResult ? teamBResult.error.status : null);
         polymarketError = { status: errorStatus, message: errorMsg };
       }
     } else if (pair.polymarket) {
