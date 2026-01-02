@@ -31,12 +31,14 @@ interface MarketsContextType {
   wsSubscriptionCount: number;
   isRefreshingKalshi: boolean;
   lastKalshiRefresh: Date | null;
+  matchedPolymarketIds: Set<string>;
   setFilters: (filters: Partial<MarketFilters>) => void;
   startDiscovery: () => void;
   stopDiscovery: () => void;
   startPriceUpdates: () => void;
   stopPriceUpdates: () => void;
   refreshKalshiPrices: () => void;
+  setMatchedPolymarketIds: (ids: Set<string>) => void;
 }
 
 const defaultFilters: MarketFilters = {
@@ -75,6 +77,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [liveRpm, setLiveRpm] = useState(0);
   const [isRefreshingKalshi, setIsRefreshingKalshi] = useState(false);
   const [lastKalshiRefresh, setLastKalshiRefresh] = useState<Date | null>(null);
+  const [matchedPolymarketIds, setMatchedPolymarketIds] = useState<Set<string>>(new Set());
 
   const discoveryIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rpmIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -814,6 +817,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // Track matched vs unmatched cursor separately for priority fetching
+  const matchedCursorRef = useRef(0);
+  const unmatchedCursorRef = useRef(0);
+  const matchedIdsRef = useRef<Set<string>>(new Set());
+  matchedIdsRef.current = matchedPolymarketIds;
+
   const dispatchOnePriceFetch = useCallback(() => {
     if (!isPriceUpdatingRef.current) return;
 
@@ -837,10 +846,29 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
     if (tokenMarkets.length === 0) return;
 
-    // Round-robin through all tokens
-    const idx = priceCursorRef.current % tokenMarkets.length;
-    priceCursorRef.current = idx + 1;
-    const market = tokenMarkets[idx];
+    // Split into matched (priority) and unmatched markets
+    const matchedMarkets = tokenMarkets.filter(m => matchedIdsRef.current.has(m.id));
+    const unmatchedMarkets = tokenMarkets.filter(m => !matchedIdsRef.current.has(m.id));
+
+    let market: UnifiedMarket;
+
+    // Priority: fetch matched markets 3x more often than unmatched
+    // Use a 3:1 ratio - every 4th fetch goes to unmatched, rest go to matched
+    const fetchRound = (matchedCursorRef.current + unmatchedCursorRef.current) % 4;
+    
+    if (matchedMarkets.length > 0 && (fetchRound < 3 || unmatchedMarkets.length === 0)) {
+      // Fetch from matched markets (priority)
+      const idx = matchedCursorRef.current % matchedMarkets.length;
+      matchedCursorRef.current = idx + 1;
+      market = matchedMarkets[idx];
+    } else if (unmatchedMarkets.length > 0) {
+      // Fetch from unmatched markets
+      const idx = unmatchedCursorRef.current % unmatchedMarkets.length;
+      unmatchedCursorRef.current = idx + 1;
+      market = unmatchedMarkets[idx];
+    } else {
+      return;
+    }
 
     // Track request in rate limiter
     globalRateLimiter.trackRequest();
@@ -852,9 +880,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const logNow = Date.now();
     if (logNow - lastQpsLogAtRef.current > 10000) {
       lastQpsLogAtRef.current = logNow;
-      console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} intervalMs=${globalRateLimiter.getIntervalMs()} tokens=${tokenMarkets.length} available=${globalRateLimiter.getAvailableTokens()}`);
+      console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} matched=${matchedMarkets.length} unmatched=${unmatchedMarkets.length} available=${globalRateLimiter.getAvailableTokens()}`);
     }
-  }, [getApiKey, firePriceFetch]);
+  }, [getApiKey, firePriceFetch, matchedPolymarketIds]);
 
   const startSteadyPriceLoop = useCallback(() => {
     if (priceDispatchIntervalRef.current) return;
@@ -1055,12 +1083,14 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       wsSubscriptionCount,
       isRefreshingKalshi,
       lastKalshiRefresh,
+      matchedPolymarketIds,
       setFilters,
       startDiscovery,
       stopDiscovery,
       startPriceUpdates,
       stopPriceUpdates,
       refreshKalshiPrices,
+      setMatchedPolymarketIds,
     }}>
       {children}
     </MarketsContext.Provider>
@@ -1106,11 +1136,13 @@ export function useMarkets(): MarketsContextType {
     wsSubscriptionCount: 0,
     isRefreshingKalshi: false,
     lastKalshiRefresh: null,
+    matchedPolymarketIds: new Set(),
     setFilters: () => undefined,
     startDiscovery: () => undefined,
     stopDiscovery: () => undefined,
     startPriceUpdates: () => undefined,
     stopPriceUpdates: () => undefined,
+    setMatchedPolymarketIds: () => undefined,
     refreshKalshiPrices: () => undefined,
   };
 }
