@@ -5,6 +5,7 @@ export interface ArbitrageSettings {
   maxSkewSeconds: number;       // Max time difference between platforms
   minProfitPercent: number;     // Minimum profit % to show opportunity
   kalshiRefreshIntervalSeconds: number; // How often to refresh Kalshi prices
+  showStaleOpportunities: boolean; // Show stale opportunities with warning
 }
 
 const DEFAULT_SETTINGS: ArbitrageSettings = {
@@ -12,6 +13,7 @@ const DEFAULT_SETTINGS: ArbitrageSettings = {
   maxSkewSeconds: 900,          // 15 minutes
   minProfitPercent: 0.5,        // 0.5% minimum profit
   kalshiRefreshIntervalSeconds: 30, // Refresh Kalshi every 30s
+  showStaleOpportunities: false, // Hide stale by default
 };
 
 const STORAGE_KEY = 'arbitrage-settings';

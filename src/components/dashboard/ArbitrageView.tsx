@@ -10,7 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles } from 'lucide-react';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 type SortOption = 'profit' | 'expiration' | 'freshness';
@@ -82,7 +82,7 @@ function FreshnessIndicator({
 }
 
 
-function ArbitrageCard({ opportunity, maxAgeSeconds }: { opportunity: ArbitrageOpportunity; maxAgeSeconds: number }) {
+function ArbitrageCard({ opportunity, maxAgeSeconds, isStale = false }: { opportunity: ArbitrageOpportunity; maxAgeSeconds: number; isStale?: boolean }) {
   const { match, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate } = opportunity;
   
   const polymarketUrl = match.polymarket.marketSlug 
@@ -106,14 +106,22 @@ function ArbitrageCard({ opportunity, maxAgeSeconds }: { opportunity: ArbitrageO
   };
   
   return (
-    <Card className={`border-chart-4/40 bg-gradient-to-br ${getProfitGradient(profitPercent)} hover:border-chart-4/60 transition-all duration-200 overflow-hidden`}>
+    <Card className={`border-chart-4/40 bg-gradient-to-br ${getProfitGradient(profitPercent)} hover:border-chart-4/60 transition-all duration-200 overflow-hidden ${isStale ? 'opacity-70' : ''}`}>
       {/* Profit Header Bar */}
-      <div className="bg-gradient-to-r from-chart-4/10 to-transparent px-3 sm:px-4 py-2 border-b border-chart-4/20">
+      <div className={`bg-gradient-to-r ${isStale ? 'from-amber-500/20' : 'from-chart-4/10'} to-transparent px-3 sm:px-4 py-2 border-b ${isStale ? 'border-amber-500/30' : 'border-chart-4/20'}`}>
         <div className="flex items-center justify-between gap-2">
-          <Badge className={`${getProfitBadgeStyle(profitPercent)} text-xs sm:text-sm px-2 sm:px-3 py-1`}>
-            <Sparkles className="w-3 h-3 mr-1" />
-            +{formatProfitPercent(profitPercent)}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {isStale && (
+              <Badge variant="outline" className="border-amber-500/50 text-amber-500 text-[10px] px-1.5 py-0">
+                <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />
+                STALE
+              </Badge>
+            )}
+            <Badge className={`${getProfitBadgeStyle(profitPercent)} text-xs sm:text-sm px-2 sm:px-3 py-1`}>
+              <Sparkles className="w-3 h-3 mr-1" />
+              +{formatProfitPercent(profitPercent)}
+            </Badge>
+          </div>
           <FreshnessIndicator 
             polymarket={match.polymarket.lastPriceUpdatedAt} 
             kalshi={match.kalshi.lastPriceUpdatedAt}
@@ -320,6 +328,7 @@ function MatchCard({ match, maxAgeSeconds }: { match: CrossPlatformMatch; maxAge
 export function ArbitrageView() {
   const { 
     freshOpportunities, 
+    staleOpportunities,
     staleCount, 
     lowProfitCount,
     matches, 
@@ -336,15 +345,19 @@ export function ArbitrageView() {
   const { refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary } = useMarkets();
   const [sortBy, setSortBy] = useState<SortOption>('profit');
 
-  const sortedOpportunities = useMemo(() => {
-    const sorted = [...freshOpportunities];
+  // Combine fresh and stale if toggle is on
+  const displayOpportunities = useMemo(() => {
+    const all = settings.showStaleOpportunities 
+      ? [...freshOpportunities, ...staleOpportunities]
+      : freshOpportunities;
+    
     switch (sortBy) {
       case 'profit':
-        return sorted.sort((a, b) => b.profitPercent - a.profitPercent);
+        return all.sort((a, b) => b.profitPercent - a.profitPercent);
       case 'expiration':
-        return sorted.sort((a, b) => a.expirationDate.getTime() - b.expirationDate.getTime());
+        return all.sort((a, b) => a.expirationDate.getTime() - b.expirationDate.getTime());
       case 'freshness':
-        return sorted.sort((a, b) => {
+        return all.sort((a, b) => {
           const aFresh = Math.max(
             a.match.polymarket.lastPriceUpdatedAt?.getTime() || 0,
             a.match.kalshi.lastPriceUpdatedAt?.getTime() || 0
@@ -356,9 +369,12 @@ export function ArbitrageView() {
           return bFresh - aFresh;
         });
       default:
-        return sorted;
+        return all;
     }
-  }, [freshOpportunities, sortBy]);
+  }, [freshOpportunities, staleOpportunities, settings.showStaleOpportunities, sortBy]);
+  
+  // Track which opportunities are stale for badge display
+  const staleIds = useMemo(() => new Set(staleOpportunities.map(o => o.id)), [staleOpportunities]);
   
   if (isLoading && matches.length === 0) {
     return (
@@ -416,18 +432,23 @@ export function ArbitrageView() {
         <div className="flex items-center gap-3">
           {/* Opportunity Count with Visual */}
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${freshOpportunities.length > 0 ? 'bg-chart-4/20' : 'bg-muted'}`}>
-              <Sparkles className={`w-4 h-4 ${freshOpportunities.length > 0 ? 'text-chart-4' : 'text-muted-foreground'}`} />
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${displayOpportunities.length > 0 ? 'bg-chart-4/20' : 'bg-muted'}`}>
+              <Sparkles className={`w-4 h-4 ${displayOpportunities.length > 0 ? 'text-chart-4' : 'text-muted-foreground'}`} />
             </div>
             <div>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Opportunities</p>
-              <p className={`text-lg font-bold leading-none ${freshOpportunities.length > 0 ? 'text-chart-4' : 'text-muted-foreground'}`}>
-                {freshOpportunities.length}
-              </p>
+              <div className="flex items-baseline gap-1">
+                <p className={`text-lg font-bold leading-none ${displayOpportunities.length > 0 ? 'text-chart-4' : 'text-muted-foreground'}`}>
+                  {freshOpportunities.length}
+                </p>
+                {settings.showStaleOpportunities && staleOpportunities.length > 0 && (
+                  <span className="text-xs text-amber-500">+{staleOpportunities.length} stale</span>
+                )}
+              </div>
             </div>
           </div>
           
-          {freshOpportunities.length > 1 && (
+          {displayOpportunities.length > 1 && (
             <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
               <SelectTrigger className="w-[130px] sm:w-[150px] h-9 text-xs">
                 <ArrowUpDown className="w-3 h-3 mr-1" />
@@ -460,13 +481,13 @@ export function ArbitrageView() {
       </div>
       
       {/* Arbitrage Opportunities */}
-      {sortedOpportunities.length > 0 ? (
+      {displayOpportunities.length > 0 ? (
         <div className="grid gap-3 sm:gap-4">
-          {sortedOpportunities.map(opp => (
-            <ArbitrageCard key={opp.id} opportunity={opp} maxAgeSeconds={settings.maxAgeSeconds} />
+          {displayOpportunities.map(opp => (
+            <ArbitrageCard key={opp.id} opportunity={opp} maxAgeSeconds={settings.maxAgeSeconds} isStale={staleIds.has(opp.id)} />
           ))}
         </div>
-      ) : staleCount > 0 ? (
+      ) : staleCount > 0 && !settings.showStaleOpportunities ? (
         <Card className="border-dashed border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-transparent">
           <CardContent className="py-8 sm:py-12 text-center px-4">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-500/10 flex items-center justify-center">
