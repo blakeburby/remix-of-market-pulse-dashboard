@@ -308,6 +308,22 @@ function MatchedPairCard({
           </div>
         </div>
 
+        {/* Edge calculation */}
+        {pair.kalshiPrices && pair.polymarketPrices && (
+          <div className="text-xs text-center mb-3 p-2 rounded bg-muted/30">
+            {(() => {
+              const cost1 = pair.kalshiPrices.yesPrice + pair.polymarketPrices.noPrice;
+              const cost2 = pair.polymarketPrices.yesPrice + pair.kalshiPrices.noPrice;
+              const bestCost = Math.min(cost1, cost2);
+              const edge = ((1 - bestCost) / bestCost * 100);
+              if (edge > 0) {
+                return <span className="text-green-600 font-medium">Edge: +{edge.toFixed(2)}%</span>;
+              }
+              return <span className="text-muted-foreground">Edge: {edge.toFixed(2)}% (no arb)</span>;
+            })()}
+          </div>
+        )}
+
         {/* Links + Retry */}
         <div className="flex gap-2">
           {hasError && (
