@@ -894,19 +894,16 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
     if (tokenMarkets.length === 0) return;
 
-    // OPTIMIZATION: Only fetch prices for matched markets
-    // This focuses all API budget on arbitrage-relevant markets
+    // OPTIMIZATION: Prioritize matched markets, but still fetch others if no matches yet
     const matchedMarkets = tokenMarkets.filter(m => matchedIdsRef.current.has(m.id));
 
-    if (matchedMarkets.length === 0) {
-      // No matched markets yet - skip until matching is done
-      return;
-    }
+    // Use matched markets if available, otherwise fall back to all token markets
+    const targetMarkets = matchedMarkets.length > 0 ? matchedMarkets : tokenMarkets;
 
-    // Round-robin through matched markets only
-    const idx = matchedCursorRef.current % matchedMarkets.length;
+    // Round-robin through target markets
+    const idx = matchedCursorRef.current % targetMarkets.length;
     matchedCursorRef.current = idx + 1;
-    const market = matchedMarkets[idx];
+    const market = targetMarkets[idx];
 
     // Track request in rate limiter
     globalRateLimiter.trackRequest();
