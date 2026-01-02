@@ -88,6 +88,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const isPriceUpdatingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const [wsEnabled, setWsEnabled] = useState(false);
+  
+  // Ref for matched IDs to avoid stale closure in warmup functions
+  const matchedIdsRef = useRef<Set<string>>(new Set());
+  matchedIdsRef.current = matchedPolymarketIds;
 
   // Batched price updates - accumulate updates and flush every 500ms to reduce re-renders
   const pendingPriceUpdates = useRef<Map<string, { priceA: number; priceB: number; timestamp: Date }>>(new Map());
@@ -485,20 +489,29 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   const priceWarmupChainRef = useRef<Promise<void>>(Promise.resolve());
 
-  const warmPolymarketPrices = async (
+  // OPTIMIZATION: Only warm prices for markets that have matches
+  const warmMatchedPolymarketPrices = async (
     discoveredMarkets: UnifiedMarket[],
     apiKey: string,
-    signal?: AbortSignal,
-    maxCount?: number
+    signal?: AbortSignal
   ) => {
-    // Warm ALL markets - no limits, rate limiter handles pacing
+    // Only warm prices for matched Polymarket markets
+    const matchedIds = matchedIdsRef.current;
     const targets = discoveredMarkets
-      .filter(m => m.platform === 'POLYMARKET' && m.sideA.tokenId);
+      .filter(m => 
+        m.platform === 'POLYMARKET' && 
+        m.sideA.tokenId &&
+        matchedIds.has(m.id)
+      );
 
-    if (targets.length === 0) return;
+    if (targets.length === 0) {
+      console.log('[Price Warmup] No matched markets to warm');
+      return;
+    }
+    
+    console.log(`[Price Warmup] Warming ${targets.length} matched markets (skipping ${discoveredMarkets.filter(m => m.platform === 'POLYMARKET').length - targets.length} unmatched)`);
 
     const pending = new Map<string, number>();
-    // Conservative batch size - let rate limiter handle pacing
     const BATCH_SIZE = tier === 'free' ? 3 : 10;
 
     const flush = () => {
@@ -522,14 +535,12 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       setLastPriceUpdate(new Date());
     };
 
-    // Process using streaming for true 100 QPS
     for (let i = 0; i < targets.length; i += BATCH_SIZE) {
       if (signal?.aborted) break;
 
       const batch = targets.slice(i, i + BATCH_SIZE);
       const promises: Promise<void>[] = [];
       
-      // Use streaming acquisition - fires each request as token becomes available
       await globalRateLimiter.acquireStream(batch.length, (index) => {
         const market = batch[index];
         const tokenId = market.sideA.tokenId!;
@@ -554,10 +565,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         promises.push(promise);
       });
       
-      // Wait for batch to complete
       await Promise.allSettled(promises);
-
-      // Flush after each batch for responsive UI updates
       flush();
     }
   };
@@ -605,10 +613,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           pageMarkets = data.markets.map(convertPolymarketMarket);
           hasMore = data.pagination.has_more;
 
-          // Warm prices immediately for discovered markets
-          priceWarmupChainRef.current = priceWarmupChainRef.current
-            .then(() => warmPolymarketPrices(pageMarkets, apiKey, signal, pageMarkets.length))
-            .catch(() => undefined);
+          // DON'T warm prices during discovery - wait until matching is done
+          // This saves thousands of API calls for unmatched markets
         } else {
           const data: KalshiMarketsResponse = await response.json();
           pageMarkets = data.markets.map(convertKalshiMarket);
@@ -716,6 +722,22 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       // Clear discovery progress when done
       setDiscoveryProgress(null);
 
+      // OPTIMIZATION: Now that we have all markets, run matching and THEN warm prices
+      // This happens automatically via useArbitrage hook which sets matchedPolymarketIds
+      // The warmMatchedPolymarketPrices will be called after matches are computed
+      
+      // Trigger price warmup for matched markets only
+      setTimeout(() => {
+        if (matchedIdsRef.current.size > 0) {
+          console.log(`[Discovery] Warming prices for ${matchedIdsRef.current.size} matched markets`);
+          priceWarmupChainRef.current = warmMatchedPolymarketPrices(
+            polymarketMarkets,
+            apiKey,
+            signal
+          );
+        }
+      }, 500); // Small delay to let matching complete
+
       if (polymarketMarkets.length > 0 || kalshiMarkets.length > 0) {
         toast({
           title: "Discovery complete",
@@ -726,7 +748,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       console.error('Discovery error:', error);
       setDiscoveryProgress(null);
     }
-  }, [getApiKey, fetchPlatformMarkets, warmPolymarketPrices, tier]);
+  }, [getApiKey, fetchPlatformMarkets, tier, warmMatchedPolymarketPrices]);
 
   // Track failed token IDs to avoid retrying them
   const failedTokenIds = useRef<Set<string>>(new Set());
@@ -817,11 +839,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // Track matched vs unmatched cursor separately for priority fetching
+  // Track cursor for round-robin price fetching of matched markets
   const matchedCursorRef = useRef(0);
-  const unmatchedCursorRef = useRef(0);
-  const matchedIdsRef = useRef<Set<string>>(new Set());
-  matchedIdsRef.current = matchedPolymarketIds;
 
   const dispatchOnePriceFetch = useCallback(() => {
     if (!isPriceUpdatingRef.current) return;
@@ -846,29 +865,19 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
     if (tokenMarkets.length === 0) return;
 
-    // Split into matched (priority) and unmatched markets
+    // OPTIMIZATION: Only fetch prices for matched markets
+    // This focuses all API budget on arbitrage-relevant markets
     const matchedMarkets = tokenMarkets.filter(m => matchedIdsRef.current.has(m.id));
-    const unmatchedMarkets = tokenMarkets.filter(m => !matchedIdsRef.current.has(m.id));
 
-    let market: UnifiedMarket;
-
-    // Priority: fetch matched markets 3x more often than unmatched
-    // Use a 3:1 ratio - every 4th fetch goes to unmatched, rest go to matched
-    const fetchRound = (matchedCursorRef.current + unmatchedCursorRef.current) % 4;
-    
-    if (matchedMarkets.length > 0 && (fetchRound < 3 || unmatchedMarkets.length === 0)) {
-      // Fetch from matched markets (priority)
-      const idx = matchedCursorRef.current % matchedMarkets.length;
-      matchedCursorRef.current = idx + 1;
-      market = matchedMarkets[idx];
-    } else if (unmatchedMarkets.length > 0) {
-      // Fetch from unmatched markets
-      const idx = unmatchedCursorRef.current % unmatchedMarkets.length;
-      unmatchedCursorRef.current = idx + 1;
-      market = unmatchedMarkets[idx];
-    } else {
+    if (matchedMarkets.length === 0) {
+      // No matched markets yet - skip until matching is done
       return;
     }
+
+    // Round-robin through matched markets only
+    const idx = matchedCursorRef.current % matchedMarkets.length;
+    matchedCursorRef.current = idx + 1;
+    const market = matchedMarkets[idx];
 
     // Track request in rate limiter
     globalRateLimiter.trackRequest();
@@ -880,9 +889,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const logNow = Date.now();
     if (logNow - lastQpsLogAtRef.current > 10000) {
       lastQpsLogAtRef.current = logNow;
-      console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} matched=${matchedMarkets.length} unmatched=${unmatchedMarkets.length} available=${globalRateLimiter.getAvailableTokens()}`);
+      console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} matched=${matchedMarkets.length} available=${globalRateLimiter.getAvailableTokens()}`);
     }
-  }, [getApiKey, firePriceFetch, matchedPolymarketIds]);
+  }, [getApiKey, firePriceFetch]);
 
   const startSteadyPriceLoop = useCallback(() => {
     if (priceDispatchIntervalRef.current) return;
