@@ -1,13 +1,22 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useArbitrageSettings } from '@/hooks/useArbitrageSettings';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
 
 export type SportType = 'nfl' | 'nba' | 'mlb' | 'nhl' | 'cfb' | 'cbb';
 
 export interface PriceError {
   status: number | null;
   message: string;
+}
+
+export interface BidAskData {
+  yesBid: number | null;
+  yesAsk: number | null;
+  noBid: number | null;
+  noAsk: number | null;
+  spread: number | null;
 }
 
 export interface MatchedMarketPair {
@@ -26,6 +35,7 @@ export interface MatchedMarketPair {
     yesPrice: number;
     noPrice: number;
   } | null;
+  kalshiBidAsk: BidAskData | null;
   kalshiError: PriceError | null;
   polymarketPrices: {
     yesPrice: number;
@@ -33,6 +43,7 @@ export interface MatchedMarketPair {
   } | null;
   polymarketError: PriceError | null;
   pricesFetched: boolean;
+  isRetrying: boolean;
 }
 
 export interface SportsArbitrageOpportunity {
@@ -51,6 +62,13 @@ export interface SportsArbitrageOpportunity {
   profitPerDollar: number;
   expirationDate: Date;
   matchScore: number;
+  kalshiBidAsk: BidAskData | null;
+}
+
+export interface PriceProgress {
+  total: number;
+  completed: number;
+  current: string | null;
 }
 
 interface UseSportsArbitrageResult {
@@ -58,16 +76,29 @@ interface UseSportsArbitrageResult {
   opportunities: SportsArbitrageOpportunity[];
   isLoading: boolean;
   isFetchingPrices: boolean;
+  priceProgress: PriceProgress;
   error: string | null;
   lastRefresh: Date | null;
   refresh: () => Promise<void>;
+  retryPair: (eventTicker: string) => Promise<void>;
   sport: SportType;
   setSport: (sport: SportType) => void;
   date: Date;
   setDate: (date: Date) => void;
   settings: ReturnType<typeof useArbitrageSettings>['settings'];
   updateSettings: ReturnType<typeof useArbitrageSettings>['updateSettings'];
+  // Auto-refresh
+  autoRefreshEnabled: boolean;
+  setAutoRefreshEnabled: (enabled: boolean) => void;
+  autoRefreshCountdown: number;
+  // Filters
+  hideIlliquid: boolean;
+  setHideIlliquid: (hide: boolean) => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
 }
+
+const AUTO_REFRESH_INTERVAL = 30; // seconds
 
 export function useSportsArbitrage(): UseSportsArbitrageResult {
   const { getApiKey } = useAuth();
@@ -77,11 +108,25 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
   const [matchedPairs, setMatchedPairs] = useState<MatchedMarketPair[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
+  const [priceProgress, setPriceProgress] = useState<PriceProgress>({ total: 0, completed: 0, current: null });
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  
+  // Auto-refresh state
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [autoRefreshCountdown, setAutoRefreshCountdown] = useState(AUTO_REFRESH_INTERVAL);
+  const autoRefreshRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Filters
+  const [hideIlliquid, setHideIlliquid] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Track previous opportunities count for alerts
+  const prevOpportunitiesCount = useRef(0);
 
   // Result type for price fetches
-  type PriceResult = { price: number } | { error: PriceError };
+  type PriceResult = { price: number; bidAsk?: BidAskData } | { error: PriceError };
 
   // Fetch a single Polymarket token price
   const fetchPolymarketPrice = useCallback(async (tokenId: string, apiKey: string): Promise<PriceResult> => {
@@ -111,19 +156,25 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     }
   }, []);
 
-  // Fetch Kalshi market price (returns cents 0-100)
-  // For sports, "last_price" is frequently 0 even when there is an active bid/ask.
-  // We therefore prefer YES bid/ask when available and fall back to last trade price.
+  // Fetch Kalshi market price with bid/ask data
   const fetchKalshiPrice = useCallback(async (marketTicker: string, apiKey: string): Promise<PriceResult> => {
     const safeTicker = encodeURIComponent(marketTicker);
 
-    const deriveYesPriceCents = (payload: any): number | null => {
+    const deriveYesPriceCents = (payload: any): { price: number | null; bidAsk: BidAskData } => {
       const resolved = (typeof payload === 'object' && payload !== null && 'market' in payload)
         ? payload.market
         : payload;
 
       const yesBid = resolved?.yes_bid ?? resolved?.yesBid ?? null;
       const yesAsk = resolved?.yes_ask ?? resolved?.yesAsk ?? null;
+      const noBid = resolved?.no_bid ?? resolved?.noBid ?? null;
+      const noAsk = resolved?.no_ask ?? resolved?.noAsk ?? null;
+      
+      const spread = (typeof yesBid === 'number' && typeof yesAsk === 'number' && yesBid > 0 && yesAsk > 0)
+        ? yesAsk - yesBid
+        : null;
+
+      const bidAsk: BidAskData = { yesBid, yesAsk, noBid, noAsk, spread };
 
       const fromBidAsk =
         (typeof yesBid === 'number' && yesBid > 0 && typeof yesAsk === 'number' && yesAsk > 0)
@@ -134,7 +185,7 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
               ? yesBid
               : null;
 
-      if (typeof fromBidAsk === 'number' && fromBidAsk > 0) return fromBidAsk;
+      if (typeof fromBidAsk === 'number' && fromBidAsk > 0) return { price: fromBidAsk, bidAsk };
 
       const rawLast =
         (typeof resolved === 'number' ? resolved : null) ??
@@ -144,11 +195,10 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
         resolved?.data?.last_price ??
         null;
 
-      return (typeof rawLast === 'number' && rawLast > 0) ? rawLast : null;
+      return { price: (typeof rawLast === 'number' && rawLast > 0) ? rawLast : null, bidAsk };
     };
 
     const fetchMarketSnapshot = async (): Promise<any | null> => {
-      // Some Dome endpoints support filtering by tickers; if not, we fail quietly.
       try {
         const resp = await fetch(`https://api.domeapi.io/v1/kalshi/markets?tickers=${safeTicker}&limit=1`, {
           headers: {
@@ -167,7 +217,6 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     };
 
     try {
-      // Primary: dedicated price endpoint
       const response = await fetch(`https://api.domeapi.io/v1/kalshi/market-price/${safeTicker}`, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -180,19 +229,21 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       }
 
       const data = await response.json();
-      let price = deriveYesPriceCents(data);
+      let result = deriveYesPriceCents(data);
 
-      // Fallback: markets snapshot (bid/ask/last) when price endpoint returns 0 or missing
-      if (!price) {
+      // Fallback: markets snapshot when price endpoint returns 0 or missing
+      if (!result.price) {
         const snapshot = await fetchMarketSnapshot();
-        price = snapshot ? deriveYesPriceCents(snapshot) : null;
+        if (snapshot) {
+          result = deriveYesPriceCents(snapshot);
+        }
       }
 
-      if (!price) {
+      if (!result.price) {
         return { error: { status: null, message: 'No price / no liquidity' } };
       }
 
-      return { price };
+      return { price: result.price, bidAsk: result.bidAsk };
     } catch (err) {
       return { error: { status: null, message: err instanceof Error ? err.message : 'Network error' } };
     }
@@ -240,69 +291,120 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     }
   }, [getApiKey, sport, date]);
 
-  // Fetch prices for matched pairs
+  // Fetch prices for a single pair
+  const fetchPriceForPair = useCallback(async (pair: MatchedMarketPair): Promise<MatchedMarketPair> => {
+    const apiKey = getApiKey();
+    if (!apiKey) return pair;
+
+    let kalshiPrices: { yesPrice: number; noPrice: number } | null = null;
+    let kalshiBidAsk: BidAskData | null = null;
+    let kalshiError: PriceError | null = null;
+    let polymarketPrices: { yesPrice: number; noPrice: number } | null = null;
+    let polymarketError: PriceError | null = null;
+
+    // Fetch Kalshi price
+    if (pair.kalshi.market_tickers.length >= 1) {
+      const result = await fetchKalshiPrice(pair.kalshi.market_tickers[0], apiKey);
+      if ('price' in result) {
+        kalshiPrices = {
+          yesPrice: result.price / 100,
+          noPrice: 1 - (result.price / 100),
+        };
+        kalshiBidAsk = result.bidAsk || null;
+      } else {
+        kalshiError = result.error;
+      }
+    } else {
+      kalshiError = { status: null, message: 'No market ticker' };
+    }
+
+    // Fetch Polymarket prices
+    if (pair.polymarket && pair.polymarket.token_ids.length >= 2) {
+      const [yesTokenId, noTokenId] = pair.polymarket.token_ids;
+      const [yesResult, noResult] = await Promise.all([
+        fetchPolymarketPrice(yesTokenId, apiKey),
+        fetchPolymarketPrice(noTokenId, apiKey),
+      ]);
+
+      if ('price' in yesResult && 'price' in noResult) {
+        polymarketPrices = { yesPrice: yesResult.price, noPrice: noResult.price };
+      } else {
+        const errorMsg = 'error' in yesResult ? yesResult.error.message : ('error' in noResult ? noResult.error.message : 'Unknown error');
+        const errorStatus = 'error' in yesResult ? yesResult.error.status : ('error' in noResult ? noResult.error.status : null);
+        polymarketError = { status: errorStatus, message: errorMsg };
+      }
+    } else if (pair.polymarket) {
+      polymarketError = { status: null, message: 'Missing token IDs' };
+    }
+
+    return {
+      ...pair,
+      kalshiPrices,
+      kalshiBidAsk,
+      kalshiError,
+      polymarketPrices,
+      polymarketError,
+      pricesFetched: true,
+      isRetrying: false,
+    };
+  }, [getApiKey, fetchPolymarketPrice, fetchKalshiPrice]);
+
+  // Fetch prices for matched pairs with progress tracking
   const fetchPricesForPairs = useCallback(async (pairs: MatchedMarketPair[]): Promise<MatchedMarketPair[]> => {
     const apiKey = getApiKey();
     if (!apiKey) return pairs;
 
-    // Fetch prices in parallel with small delays
-    const updatedPairs = await Promise.all(
-      pairs.map(async (pair, index) => {
-        // Add small delay between requests to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, index * 50));
-        
-        let kalshiPrices: { yesPrice: number; noPrice: number } | null = null;
-        let kalshiError: PriceError | null = null;
-        let polymarketPrices: { yesPrice: number; noPrice: number } | null = null;
-        let polymarketError: PriceError | null = null;
+    setPriceProgress({ total: pairs.length, completed: 0, current: null });
+    const updatedPairs: MatchedMarketPair[] = [];
 
-        // Fetch Kalshi price (first market ticker is YES)
-        if (pair.kalshi.market_tickers.length >= 1) {
-          const result = await fetchKalshiPrice(pair.kalshi.market_tickers[0], apiKey);
-          if ('price' in result) {
-            kalshiPrices = {
-              yesPrice: result.price / 100, // Convert cents to decimal
-              noPrice: 1 - (result.price / 100),
-            };
-          } else {
-            kalshiError = result.error;
-          }
-        } else {
-          kalshiError = { status: null, message: 'No market ticker' };
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i];
+      setPriceProgress({ total: pairs.length, completed: i, current: pair.kalshi.event_ticker });
+      
+      // Add small delay between requests
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      const updatedPair = await fetchPriceForPair(pair);
+      updatedPairs.push(updatedPair);
+      
+      // Update state incrementally for better UX
+      setMatchedPairs(prev => {
+        const newPairs = [...prev];
+        const idx = newPairs.findIndex(p => p.kalshi.event_ticker === pair.kalshi.event_ticker);
+        if (idx >= 0) {
+          newPairs[idx] = updatedPair;
         }
+        return newPairs;
+      });
+    }
 
-        // Fetch Polymarket prices
-        if (pair.polymarket && pair.polymarket.token_ids.length >= 2) {
-          const [yesTokenId, noTokenId] = pair.polymarket.token_ids;
-          const [yesResult, noResult] = await Promise.all([
-            fetchPolymarketPrice(yesTokenId, apiKey),
-            fetchPolymarketPrice(noTokenId, apiKey),
-          ]);
-
-          if ('price' in yesResult && 'price' in noResult) {
-            polymarketPrices = { yesPrice: yesResult.price, noPrice: noResult.price };
-          } else {
-            const errorMsg = 'error' in yesResult ? yesResult.error.message : ('error' in noResult ? noResult.error.message : 'Unknown error');
-            const errorStatus = 'error' in yesResult ? yesResult.error.status : ('error' in noResult ? noResult.error.status : null);
-            polymarketError = { status: errorStatus, message: errorMsg };
-          }
-        } else if (pair.polymarket) {
-          polymarketError = { status: null, message: 'Missing token IDs' };
-        }
-
-        return {
-          ...pair,
-          kalshiPrices,
-          kalshiError,
-          polymarketPrices,
-          polymarketError,
-          pricesFetched: true,
-        };
-      })
-    );
-
+    setPriceProgress({ total: pairs.length, completed: pairs.length, current: null });
     return updatedPairs;
-  }, [getApiKey, fetchPolymarketPrice, fetchKalshiPrice]);
+  }, [getApiKey, fetchPriceForPair]);
+
+  // Retry a single pair
+  const retryPair = useCallback(async (eventTicker: string) => {
+    const pairIndex = matchedPairs.findIndex(p => p.kalshi.event_ticker === eventTicker);
+    if (pairIndex === -1) return;
+
+    // Mark as retrying
+    setMatchedPairs(prev => {
+      const newPairs = [...prev];
+      newPairs[pairIndex] = { ...newPairs[pairIndex], isRetrying: true };
+      return newPairs;
+    });
+
+    const pair = matchedPairs[pairIndex];
+    const updatedPair = await fetchPriceForPair(pair);
+
+    setMatchedPairs(prev => {
+      const newPairs = [...prev];
+      newPairs[pairIndex] = updatedPair;
+      return newPairs;
+    });
+  }, [matchedPairs, fetchPriceForPair]);
 
   // Main refresh function
   const refresh = useCallback(async () => {
@@ -310,10 +412,8 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     setError(null);
 
     try {
-      // Fetch matching markets by sport and date
       const matchesData = await fetchMatchingMarkets();
 
-      // Build matched pairs from API response
       const pairs: MatchedMarketPair[] = [];
       
       for (const [key, platformsArray] of Object.entries(matchesData)) {
@@ -341,25 +441,26 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
               token_ids: polyData.token_ids || [],
             } : null,
             kalshiPrices: null,
+            kalshiBidAsk: null,
             kalshiError: null,
             polymarketPrices: null,
             polymarketError: null,
             pricesFetched: false,
+            isRetrying: false,
           });
         }
       }
 
       setMatchedPairs(pairs);
 
-      // Fetch prices for all pairs
       if (pairs.length > 0) {
         setIsFetchingPrices(true);
-        const pairsWithPrices = await fetchPricesForPairs(pairs);
-        setMatchedPairs(pairsWithPrices);
+        await fetchPricesForPairs(pairs);
         setIsFetchingPrices(false);
       }
 
       setLastRefresh(new Date());
+      setAutoRefreshCountdown(AUTO_REFRESH_INTERVAL);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
@@ -373,7 +474,36 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
     refresh();
   }, [sport, date]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Calculate arbitrage opportunities from matched pairs with prices
+  // Auto-refresh timer
+  useEffect(() => {
+    if (autoRefreshEnabled && !isLoading && !isFetchingPrices) {
+      // Countdown timer
+      countdownRef.current = setInterval(() => {
+        setAutoRefreshCountdown(prev => {
+          if (prev <= 1) {
+            return AUTO_REFRESH_INTERVAL;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      // Refresh timer
+      autoRefreshRef.current = setInterval(() => {
+        refresh();
+      }, AUTO_REFRESH_INTERVAL * 1000);
+    }
+
+    return () => {
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current);
+      }
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current);
+      }
+    };
+  }, [autoRefreshEnabled, isLoading, isFetchingPrices, refresh]);
+
+  // Calculate arbitrage opportunities
   const opportunities = useMemo(() => {
     const opps: SportsArbitrageOpportunity[] = [];
 
@@ -387,7 +517,6 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
       const polyYes = pair.polymarketPrices.yesPrice;
       const polyNo = pair.polymarketPrices.noPrice;
 
-      // Check both arbitrage directions
       // Direction 1: Buy YES on Kalshi, buy NO on Polymarket
       const cost1 = kalshiYes + polyNo;
       if (cost1 < 1) {
@@ -408,8 +537,9 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
             combinedCost: cost1,
             profitPercent,
             profitPerDollar: profit,
-            expirationDate: new Date(), // Date is from user selection
+            expirationDate: new Date(),
             matchScore: 1,
+            kalshiBidAsk: pair.kalshiBidAsk,
           });
         }
       }
@@ -436,28 +566,78 @@ export function useSportsArbitrage(): UseSportsArbitrageResult {
             profitPerDollar: profit,
             expirationDate: new Date(),
             matchScore: 1,
+            kalshiBidAsk: pair.kalshiBidAsk,
           });
         }
       }
     }
 
-    // Sort by profit percentage descending
     return opps.sort((a, b) => b.profitPercent - a.profitPercent);
   }, [matchedPairs, settings.minProfitPercent]);
 
+  // Alert on new opportunities
+  useEffect(() => {
+    if (opportunities.length > prevOpportunitiesCount.current && prevOpportunitiesCount.current > 0) {
+      const newCount = opportunities.length - prevOpportunitiesCount.current;
+      toast.success(`🎯 ${newCount} new arbitrage opportunit${newCount === 1 ? 'y' : 'ies'} found!`, {
+        duration: 5000,
+      });
+      // Play sound
+      try {
+        const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleR8MLpTW98aYTjMEXpHN6bCNZD0FFH6c4O7LhHlTTF1w');
+        audio.volume = 0.3;
+        audio.play().catch(() => {});
+      } catch {}
+    }
+    prevOpportunitiesCount.current = opportunities.length;
+  }, [opportunities.length]);
+
+  // Filter matched pairs
+  const filteredPairs = useMemo(() => {
+    let filtered = matchedPairs;
+
+    // Hide illiquid
+    if (hideIlliquid) {
+      filtered = filtered.filter(p => 
+        (p.kalshiPrices && (p.kalshiBidAsk?.yesBid || p.kalshiBidAsk?.yesAsk)) ||
+        p.kalshiPrices
+      );
+    }
+
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(p => 
+        p.kalshi.event_ticker.toLowerCase().includes(query) ||
+        p.polymarket?.market_slug.toLowerCase().includes(query)
+      );
+    }
+
+    return filtered;
+  }, [matchedPairs, hideIlliquid, searchQuery]);
+
   return {
-    matchedPairs,
+    matchedPairs: filteredPairs,
     opportunities,
     isLoading,
     isFetchingPrices,
+    priceProgress,
     error,
     lastRefresh,
     refresh,
+    retryPair,
     sport,
     setSport,
     date,
     setDate,
     settings,
     updateSettings,
+    autoRefreshEnabled,
+    setAutoRefreshEnabled,
+    autoRefreshCountdown,
+    hideIlliquid,
+    setHideIlliquid,
+    searchQuery,
+    setSearchQuery,
   };
 }
