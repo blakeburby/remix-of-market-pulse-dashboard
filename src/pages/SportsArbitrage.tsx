@@ -10,6 +10,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
 import { 
   RefreshCw, 
   AlertCircle,
@@ -20,9 +23,9 @@ import {
   Target,
   TrendingUp,
   Percent,
-  Clock
+  CalendarIcon
 } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 
 const SPORT_LABELS: Record<SportType, string> = {
   nfl: 'NFL',
@@ -30,6 +33,7 @@ const SPORT_LABELS: Record<SportType, string> = {
   mlb: 'MLB',
   nhl: 'NHL',
   cfb: 'College Football',
+  cbb: 'College Basketball',
 };
 
 function formatCents(price: number): string {
@@ -53,8 +57,7 @@ function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOppo
     polyNoPrice,
     combinedCost, 
     profitPercent, 
-    profitPerDollar, 
-    expirationDate 
+    profitPerDollar,
   } = opportunity;
 
   const yesPlatformPrice = buyYesOn === 'KALSHI' ? kalshiYesPrice : polyYesPrice;
@@ -129,14 +132,7 @@ function SportsArbitrageCard({ opportunity }: { opportunity: SportsArbitrageOppo
         </div>
         
         {/* Footer */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" />
-              <span>Expires {formatDistanceToNow(expirationDate, { addSuffix: true })}</span>
-            </div>
-          </div>
-          
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t">
           <div className="flex gap-2">
             <Button variant="outline" size="sm" asChild>
               <a href={kalshiUrl} target="_blank" rel="noopener noreferrer">
@@ -161,18 +157,12 @@ function MatchedPairCard({ pair }: { pair: MatchedMarketPair }) {
     ? `https://polymarket.com/event/${pair.polymarket.market_slug}`
     : null;
 
-  const kalshiYes = pair.kalshiMarket ? pair.kalshiMarket.last_price : null;
-  const kalshiNo = kalshiYes !== null ? 100 - kalshiYes : null;
-
   return (
     <Card>
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex-1">
             <p className="font-medium text-sm">
-              {pair.kalshiMarket?.title || pair.kalshi.event_ticker}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
               {pair.kalshi.event_ticker}
             </p>
           </div>
@@ -194,7 +184,10 @@ function MatchedPairCard({ pair }: { pair: MatchedMarketPair }) {
           <div className="p-2 rounded bg-muted/50 text-center">
             <p className="text-xs text-muted-foreground">Kalshi</p>
             <p className="font-bold">
-              {kalshiYes !== null ? `${kalshiYes}¢ / ${kalshiNo}¢` : '—'}
+              {pair.kalshiPrices 
+                ? `${formatCents(pair.kalshiPrices.yesPrice)} / ${formatCents(pair.kalshiPrices.noPrice)}`
+                : 'Loading...'
+              }
             </p>
           </div>
           <div className="p-2 rounded bg-muted/50 text-center">
@@ -232,17 +225,17 @@ export default function SportsArbitragePage() {
   const { isAuthenticated, logout } = useAuth();
   const { settings, updateSettings, resetSettings, defaults } = useArbitrageSettings();
   const { 
-    kalshiMarkets,
     matchedPairs,
     opportunities,
     isLoading, 
-    isLoadingMatches,
     isFetchingPrices,
     error, 
     lastRefresh, 
     refresh, 
     sport, 
-    setSport 
+    setSport,
+    date,
+    setDate,
   } = useSportsArbitrage();
   const navigate = useNavigate();
 
@@ -257,7 +250,7 @@ export default function SportsArbitragePage() {
   }
 
   const matchedCount = matchedPairs.filter(p => p.polymarket).length;
-  const pricedCount = matchedPairs.filter(p => p.polymarketPrices).length;
+  const pricedCount = matchedPairs.filter(p => p.kalshiPrices && p.polymarketPrices).length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -271,7 +264,7 @@ export default function SportsArbitragePage() {
             <h2 className="text-xl font-semibold">Sports Arbitrage</h2>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Select value={sport} onValueChange={(v) => setSport(v as SportType)}>
               <SelectTrigger className="w-[160px]">
                 <SelectValue />
@@ -282,8 +275,33 @@ export default function SportsArbitragePage() {
                 <SelectItem value="mlb">{SPORT_LABELS.mlb}</SelectItem>
                 <SelectItem value="nhl">{SPORT_LABELS.nhl}</SelectItem>
                 <SelectItem value="cfb">{SPORT_LABELS.cfb}</SelectItem>
+                <SelectItem value="cbb">{SPORT_LABELS.cbb}</SelectItem>
               </SelectContent>
             </Select>
+
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "w-[160px] justify-start text-left font-normal",
+                    !date && "text-muted-foreground"
+                  )}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {date ? format(date, "MMM d, yyyy") : <span>Pick a date</span>}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={date}
+                  onSelect={(d) => d && setDate(d)}
+                  initialFocus
+                  className={cn("p-3 pointer-events-auto")}
+                />
+              </PopoverContent>
+            </Popover>
             
             <ArbitrageSettingsPanel
               settings={settings}
@@ -314,16 +332,16 @@ export default function SportsArbitragePage() {
                   <span className="ml-2 font-medium">{SPORT_LABELS[sport]}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Kalshi:</span>
-                  <span className="ml-2 font-medium">{kalshiMarkets.length}</span>
+                  <span className="text-muted-foreground">Date:</span>
+                  <span className="ml-2 font-medium">{format(date, "MMM d, yyyy")}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Matched:</span>
+                  <span className="text-muted-foreground">Markets:</span>
+                  <span className="ml-2 font-medium">{matchedPairs.length}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Cross-Platform:</span>
                   <span className="ml-2 font-medium">{matchedCount}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Priced:</span>
-                  <span className="ml-2 font-medium">{pricedCount}</span>
                 </div>
                 <div className={opportunities.length > 0 ? 'text-green-600' : ''}>
                   <span className="text-muted-foreground">Opportunities:</span>
@@ -340,14 +358,10 @@ export default function SportsArbitragePage() {
         </Card>
 
         {/* Loading indicators */}
-        {(isLoadingMatches || isFetchingPrices) && (
+        {isFetchingPrices && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <RefreshCw className="w-4 h-4 animate-spin" />
-            <span>
-              {isFetchingPrices 
-                ? 'Fetching Polymarket prices...' 
-                : 'Finding matching Polymarket markets...'}
-            </span>
+            <span>Fetching prices...</span>
           </div>
         )}
 
@@ -364,11 +378,11 @@ export default function SportsArbitragePage() {
         )}
 
         {/* Loading State */}
-        {isLoading && kalshiMarkets.length === 0 && (
+        {isLoading && matchedPairs.length === 0 && (
           <div className="space-y-4">
             <div className="flex items-center gap-2 text-muted-foreground">
               <RefreshCw className="w-4 h-4 animate-spin" />
-              <span>Loading {SPORT_LABELS[sport]} markets...</span>
+              <span>Loading {SPORT_LABELS[sport]} markets for {format(date, "MMM d, yyyy")}...</span>
             </div>
             <div className="grid gap-4">
               {[1, 2, 3].map(i => (
@@ -409,13 +423,13 @@ export default function SportsArbitragePage() {
         )}
 
         {/* Empty State */}
-        {!isLoading && !error && kalshiMarkets.length === 0 && (
+        {!isLoading && !error && matchedPairs.length === 0 && (
           <Card className="border-dashed">
             <CardContent className="py-8 text-center">
               <Trophy className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
               <h3 className="text-lg font-semibold mb-2">No {SPORT_LABELS[sport]} Markets Found</h3>
               <p className="text-muted-foreground text-sm max-w-md mx-auto mb-4">
-                No open {SPORT_LABELS[sport]} markets found on Kalshi. Try a different sport or check back later.
+                No matching {SPORT_LABELS[sport]} markets found for {format(date, "MMMM d, yyyy")}. Try a different date or sport.
               </p>
               <Button variant="outline" onClick={refresh} disabled={isLoading}>
                 <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
