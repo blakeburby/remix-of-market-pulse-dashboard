@@ -8,10 +8,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check, Star } from 'lucide-react';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check, Star, Filter, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
@@ -471,18 +475,33 @@ export function ArbitrageView() {
     polymarketCount, 
     kalshiCount,
     settings,
+    updateSettings,
   } = useArbitrage();
   
   const { refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary } = useMarkets();
   const { isInWatchlist, toggleWatchlist } = useWatchlist();
   const [sortBy, setSortBy] = useState<SortOption>('profit');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
 
-  // Combine fresh and stale if toggle is on
+  // Filter and sort opportunities
   const displayOpportunities = useMemo(() => {
-    const all = settings.showStaleOpportunities 
+    let all = settings.showStaleOpportunities 
       ? [...freshOpportunities, ...staleOpportunities]
       : freshOpportunities;
     
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      all = all.filter(opp => 
+        opp.match.polymarket.title.toLowerCase().includes(query) ||
+        opp.match.kalshi.title.toLowerCase().includes(query) ||
+        opp.match.polymarket.marketSlug?.toLowerCase().includes(query) ||
+        opp.match.kalshi.kalshiMarketTicker?.toLowerCase().includes(query)
+      );
+    }
+    
+    // Apply sorting
     switch (sortBy) {
       case 'profit':
         return all.sort((a, b) => b.profitPercent - a.profitPercent);
@@ -503,7 +522,7 @@ export function ArbitrageView() {
       default:
         return all;
     }
-  }, [freshOpportunities, staleOpportunities, settings.showStaleOpportunities, sortBy]);
+  }, [freshOpportunities, staleOpportunities, settings.showStaleOpportunities, sortBy, searchQuery]);
   
   // Track which opportunities are stale for badge display
   const staleIds = useMemo(() => new Set(staleOpportunities.map(o => o.id)), [staleOpportunities]);
@@ -559,7 +578,132 @@ export function ArbitrageView() {
         </CardContent>
       </Card>
 
-      {/* Controls Bar - Mobile Optimized */}
+      {/* Search and Filter Bar */}
+      <Card className="border-border bg-card">
+        <CardContent className="p-3 sm:p-4 space-y-3">
+          {/* Search and Toggle Row */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search markets, tickers..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 h-9 text-sm"
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={showFilters ? "secondary" : "outline"}
+                size="sm"
+                className="h-9"
+                onClick={() => setShowFilters(!showFilters)}
+              >
+                <Filter className="w-3.5 h-3.5 mr-1.5" />
+                Filters
+                {(settings.minProfitPercent > 0 || settings.showStaleOpportunities) && (
+                  <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-chart-4/20 text-chart-4">
+                    {(settings.minProfitPercent > 0 ? 1 : 0) + (settings.showStaleOpportunities ? 1 : 0)}
+                  </Badge>
+                )}
+              </Button>
+              <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+                <SelectTrigger className="w-[130px] sm:w-[150px] h-9 text-xs">
+                  <ArrowUpDown className="w-3 h-3 mr-1" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="profit">Highest Profit</SelectItem>
+                  <SelectItem value="expiration">Soonest Expiry</SelectItem>
+                  <SelectItem value="freshness">Most Fresh</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          
+          {/* Expandable Filters */}
+          {showFilters && (
+            <div className="pt-3 border-t border-border space-y-4">
+              {/* Min Profit Slider */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Minimum Profit</Label>
+                  <span className="text-sm font-mono font-semibold text-chart-4">
+                    {settings.minProfitPercent.toFixed(1)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[settings.minProfitPercent]}
+                  onValueChange={([value]) => updateSettings({ minProfitPercent: value })}
+                  min={0}
+                  max={10}
+                  step={0.1}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Only show opportunities with profit ≥ {settings.minProfitPercent}%
+                  {lowProfitCount > 0 && (
+                    <span className="text-amber-500"> ({lowProfitCount} hidden)</span>
+                  )}
+                </p>
+              </div>
+              
+              {/* Stale Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">Show Stale Opportunities</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Include opportunities with older prices
+                    {staleCount > 0 && !settings.showStaleOpportunities && (
+                      <span className="text-amber-500"> ({staleCount} hidden)</span>
+                    )}
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.showStaleOpportunities}
+                  onCheckedChange={(checked) => updateSettings({ showStaleOpportunities: checked })}
+                />
+              </div>
+              
+              {/* Max Age Slider */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Max Price Age</Label>
+                  <span className="text-sm font-mono">
+                    {settings.maxAgeSeconds < 60 
+                      ? `${settings.maxAgeSeconds}s`
+                      : `${Math.floor(settings.maxAgeSeconds / 60)}m${settings.maxAgeSeconds % 60 > 0 ? ` ${settings.maxAgeSeconds % 60}s` : ''}`
+                    }
+                  </span>
+                </div>
+                <Slider
+                  value={[settings.maxAgeSeconds]}
+                  onValueChange={([value]) => updateSettings({ maxAgeSeconds: value })}
+                  min={30}
+                  max={600}
+                  step={30}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Prices older than this are considered stale
+                </p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      
+      {/* Stats Row */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           {/* Opportunity Count with Visual */}
@@ -568,31 +712,20 @@ export function ArbitrageView() {
               <Sparkles className={`w-4 h-4 ${displayOpportunities.length > 0 ? 'text-chart-4' : 'text-muted-foreground'}`} />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Opportunities</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Showing</p>
               <div className="flex items-baseline gap-1">
                 <p className={`text-lg font-bold leading-none ${displayOpportunities.length > 0 ? 'text-chart-4' : 'text-muted-foreground'}`}>
-                  {freshOpportunities.length}
+                  {displayOpportunities.length}
                 </p>
-                {settings.showStaleOpportunities && staleOpportunities.length > 0 && (
-                  <span className="text-xs text-amber-500">+{staleOpportunities.length} stale</span>
+                {searchQuery && (
+                  <span className="text-xs text-muted-foreground">of {freshOpportunities.length + (settings.showStaleOpportunities ? staleOpportunities.length : 0)}</span>
+                )}
+                {settings.showStaleOpportunities && staleOpportunities.length > 0 && !searchQuery && (
+                  <span className="text-xs text-amber-500">({staleOpportunities.length} stale)</span>
                 )}
               </div>
             </div>
           </div>
-          
-          {displayOpportunities.length > 1 && (
-            <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
-              <SelectTrigger className="w-[130px] sm:w-[150px] h-9 text-xs">
-                <ArrowUpDown className="w-3 h-3 mr-1" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="profit">Highest Profit</SelectItem>
-                <SelectItem value="expiration">Soonest Expiry</SelectItem>
-                <SelectItem value="freshness">Most Fresh</SelectItem>
-              </SelectContent>
-            </Select>
-          )}
         </div>
         
         <Button 
