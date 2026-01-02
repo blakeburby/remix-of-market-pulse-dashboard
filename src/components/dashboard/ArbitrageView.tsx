@@ -10,7 +10,8 @@ import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle } from 'lucide-react';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check } from 'lucide-react';
+import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
 type SortOption = 'profit' | 'expiration' | 'freshness';
@@ -83,14 +84,44 @@ function FreshnessIndicator({
 
 
 function ArbitrageCard({ opportunity, maxAgeSeconds, isStale = false }: { opportunity: ArbitrageOpportunity; maxAgeSeconds: number; isStale?: boolean }) {
+  const [copied, setCopied] = useState(false);
   const { match, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate } = opportunity;
   
   const polymarketUrl = match.polymarket.marketSlug 
     ? `https://polymarket.com/event/${match.polymarket.eventSlug}` 
     : '#';
   const kalshiUrl = match.kalshi.kalshiEventTicker 
-    ? `https://kalshi.com/markets/${match.kalshi.kalshiEventTicker}` 
+    ? `https://kalshi.com/markets/${match.kalshi.kalshiEventTicker}`
     : '#';
+
+  const copyTradePlan = () => {
+    const tradePlan = `📈 ARBITRAGE TRADE PLAN
+━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 Market: ${match.polymarket.title}
+
+📊 STEP 1: Buy YES on ${buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}
+   Price: ${formatCents(yesPlatformPrice)}
+   Link: ${buyYesOn === 'KALSHI' ? kalshiUrl : polymarketUrl}
+
+📊 STEP 2: Buy NO on ${buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}
+   Price: ${formatCents(noPlatformPrice)}
+   Link: ${buyNoOn === 'KALSHI' ? kalshiUrl : polymarketUrl}
+
+💰 PROFIT SUMMARY
+   Total Cost: ${formatCents(combinedCost)}
+   Guaranteed Payout: $1.00
+   Profit: +${formatProfitPercent(profitPercent)} (+$${profitPerDollar.toFixed(3)}/contract)
+
+⏰ Expires: ${expirationDate.toLocaleString()}
+`;
+    
+    navigator.clipboard.writeText(tradePlan).then(() => {
+      setCopied(true);
+      toast.success('Trade plan copied to clipboard!');
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   // Determine profit tier for color coding
   const getProfitGradient = (percent: number) => {
@@ -224,6 +255,15 @@ function ArbitrageCard({ opportunity, maxAgeSeconds, isStale = false }: { opport
                 <span className="hidden sm:inline">Poly</span>
                 <ExternalLink className="w-3 h-3 ml-0.5 sm:ml-1" />
               </a>
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="h-7 px-2 text-xs"
+              onClick={copyTradePlan}
+            >
+              {copied ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+              <span className="hidden sm:inline">{copied ? 'Copied!' : 'Copy Plan'}</span>
             </Button>
             <Link to={`/calculator?kalshi=${Math.round(yesPlatformPrice * 100)}&poly=${Math.round(noPlatformPrice * 100)}`}>
               <Button variant="secondary" size="sm" className="h-7 px-2 sm:px-3 text-xs font-medium">
