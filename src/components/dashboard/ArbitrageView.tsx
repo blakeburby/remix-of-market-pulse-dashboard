@@ -313,50 +313,53 @@ function ArbitrageCard({
           </div>
         </div>
         
-        {/* Footer Actions */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/50">
-          <div className="flex items-center gap-2 text-[10px] sm:text-xs text-muted-foreground">
-            <Clock className="w-3 h-3" />
-            <span>{format(expirationDate, "MMM d, yyyy 'at' h:mm a")}</span>
-            <span className="hidden sm:inline">•</span>
-            <span className="hidden sm:inline">{Math.round(match.matchScore * 100)}% match</span>
+        {/* Footer Actions - Mobile Optimized */}
+        <div className="flex flex-col gap-2 pt-2 border-t border-border/50">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[10px] sm:text-xs text-muted-foreground">
+              <Clock className="w-3 h-3" />
+              <span>{format(expirationDate, "MMM d, h:mm a")}</span>
+            </div>
+            <span className="text-[10px] text-muted-foreground">{Math.round(match.matchScore * 100)}% match</span>
           </div>
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <Button variant="ghost" size="sm" asChild className="h-7 px-2 text-xs">
-              <a href={kalshiUrl} target="_blank" rel="noopener noreferrer">
-                <KalshiIcon className="w-3.5 h-3.5 mr-1" />
-                <span className="hidden sm:inline">Kalshi</span>
-                <ExternalLink className="w-3 h-3 ml-0.5 sm:ml-1" />
+          
+          {/* Action Buttons - Stack on mobile */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button variant="ghost" size="sm" asChild className="h-8 px-2.5 text-xs flex-1 sm:flex-none min-w-0">
+              <a href={kalshiUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-1">
+                <KalshiIcon className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Kalshi</span>
+                <ExternalLink className="w-3 h-3 shrink-0" />
               </a>
             </Button>
-            <Button variant="ghost" size="sm" asChild className="h-7 px-2 text-xs">
-              <a href={polymarketUrl} target="_blank" rel="noopener noreferrer">
-                <PolymarketIcon className="w-3.5 h-3.5 mr-1" />
-                <span className="hidden sm:inline">Poly</span>
-                <ExternalLink className="w-3 h-3 ml-0.5 sm:ml-1" />
+            <Button variant="ghost" size="sm" asChild className="h-8 px-2.5 text-xs flex-1 sm:flex-none min-w-0">
+              <a href={polymarketUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-1">
+                <PolymarketIcon className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Poly</span>
+                <ExternalLink className="w-3 h-3 shrink-0" />
               </a>
             </Button>
             <Button 
               variant="outline" 
               size="sm" 
-              className="h-7 px-2 text-xs"
+              className="h-8 px-2.5 text-xs"
               onClick={copyTradePlan}
             >
-              {copied ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
-              <span className="hidden sm:inline">{copied ? 'Copied!' : 'Copy Plan'}</span>
+              {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
             </Button>
             <Button 
               variant={isWatchlisted ? "default" : "outline"}
               size="sm" 
-              className={`h-7 px-2 text-xs ${isWatchlisted ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}`}
+              className={`h-8 px-2.5 text-xs ${isWatchlisted ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}`}
               onClick={onToggleWatchlist}
             >
               <Star className={`w-3 h-3 ${isWatchlisted ? 'fill-current' : ''}`} />
             </Button>
-            <Link to={`/calculator?kalshi=${Math.round(yesPlatformPrice * 100)}&poly=${Math.round(noPlatformPrice * 100)}`}>
-              <Button variant="secondary" size="sm" className="h-7 px-2 sm:px-3 text-xs font-medium">
+            <Link to={`/calculator?kalshi=${Math.round(yesPlatformPrice * 100)}&poly=${Math.round(noPlatformPrice * 100)}`} className="flex-1 sm:flex-none">
+              <Button variant="secondary" size="sm" className="h-8 px-3 text-xs font-medium w-full">
                 <Calculator className="w-3 h-3 mr-1" />
-                Calculate
+                <span className="hidden xs:inline">Calculate</span>
+                <span className="xs:hidden">Calc</span>
               </Button>
             </Link>
           </div>
