@@ -1077,18 +1077,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Auto-start discovery when authenticated
+  // Clean up when user logs out (no auto-start to avoid rate limiting)
   useEffect(() => {
-    if (isAuthenticated) {
-      startDiscovery();
-      // Delay price updates to let discovery finish first
-      const timeout = setTimeout(() => {
-        if (isAuthenticated) {
-          startPriceUpdates();
-        }
-      }, 5000);
-      return () => clearTimeout(timeout);
-    } else {
+    if (!isAuthenticated) {
       stopDiscovery();
       stopPriceUpdates();
       setWsEnabled(false);
