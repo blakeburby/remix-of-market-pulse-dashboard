@@ -184,14 +184,19 @@ function MatchCard({ match, maxAgeSeconds }: { match: CrossPlatformMatch; maxAge
   const kalshiYes = match.kalshi.sideA.probability;
   const kalshiNo = match.kalshi.sideB.probability;
   
+  // Check if prices are real or default
+  const polyHasRealPrice = match.polymarket.lastPriceUpdatedAt !== undefined;
+  const kalshiHasRealPrice = kalshiYes > 0 && kalshiNo > 0;
+  
   // Calculate potential costs in both directions
   const cost1 = kalshiYes + polyNo; // Kalshi YES + Poly NO
   const cost2 = polyYes + kalshiNo; // Poly YES + Kalshi NO
   
-  const hasArbitrage = cost1 < 1 || cost2 < 1;
+  const hasArbitrage = polyHasRealPrice && kalshiHasRealPrice && (cost1 < 1 || cost2 < 1);
+  const hasMissingPrices = !polyHasRealPrice || !kalshiHasRealPrice;
   
   return (
-    <Card className={hasArbitrage ? 'border-green-500/50' : ''}>
+    <Card className={`${hasArbitrage ? 'border-green-500/50' : hasMissingPrices ? 'border-amber-500/30 bg-amber-500/5' : ''}`}>
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-2 mb-3">
           <p className="font-medium text-sm line-clamp-2">{match.polymarket.title}</p>
@@ -200,36 +205,58 @@ function MatchCard({ match, maxAgeSeconds }: { match: CrossPlatformMatch; maxAge
           </Badge>
         </div>
         
+        {/* Price Status Warning */}
+        {hasMissingPrices && (
+          <div className="mb-3 p-2 rounded bg-amber-500/10 text-xs text-amber-600 flex items-center gap-1.5">
+            <AlertCircle className="w-3 h-3" />
+            {!polyHasRealPrice && !kalshiHasRealPrice 
+              ? 'Awaiting prices from both platforms'
+              : !polyHasRealPrice 
+              ? 'Awaiting Polymarket price' 
+              : 'Kalshi has no trades yet (0¢)'}
+          </div>
+        )}
+        
         {/* Freshness Badge */}
-        <div className="mb-3">
-          <FreshnessBadge 
-            polymarket={match.polymarket.lastPriceUpdatedAt} 
-            kalshi={match.kalshi.lastPriceUpdatedAt}
-            maxAgeSeconds={maxAgeSeconds}
-          />
-        </div>
+        {!hasMissingPrices && (
+          <div className="mb-3">
+            <FreshnessBadge 
+              polymarket={match.polymarket.lastPriceUpdatedAt} 
+              kalshi={match.kalshi.lastPriceUpdatedAt}
+              maxAgeSeconds={maxAgeSeconds}
+            />
+          </div>
+        )}
         
         <div className="grid grid-cols-2 gap-4 text-xs">
           <div>
             <p className="text-muted-foreground mb-1">Polymarket</p>
-            <p>YES: {formatCents(polyYes)} / NO: {formatCents(polyNo)}</p>
+            <p className={!polyHasRealPrice ? 'text-muted-foreground/50' : ''}>
+              YES: {formatCents(polyYes)} / NO: {formatCents(polyNo)}
+              {!polyHasRealPrice && ' (default)'}
+            </p>
           </div>
           <div>
             <p className="text-muted-foreground mb-1">Kalshi</p>
-            <p>YES: {formatCents(kalshiYes)} / NO: {formatCents(kalshiNo)}</p>
+            <p className={!kalshiHasRealPrice ? 'text-muted-foreground/50' : ''}>
+              YES: {formatCents(kalshiYes)} / NO: {formatCents(kalshiNo)}
+              {!kalshiHasRealPrice && ' (no trades)'}
+            </p>
           </div>
         </div>
         
-        <div className="mt-3 pt-3 border-t text-xs">
-          <div className="flex justify-between">
-            <span>K-YES + P-NO:</span>
-            <span className={cost1 < 1 ? 'text-green-600 font-bold' : ''}>{formatCents(cost1)}</span>
+        {polyHasRealPrice && kalshiHasRealPrice && (
+          <div className="mt-3 pt-3 border-t text-xs">
+            <div className="flex justify-between">
+              <span>K-YES + P-NO:</span>
+              <span className={cost1 < 1 ? 'text-green-600 font-bold' : ''}>{formatCents(cost1)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>P-YES + K-NO:</span>
+              <span className={cost2 < 1 ? 'text-green-600 font-bold' : ''}>{formatCents(cost2)}</span>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span>P-YES + K-NO:</span>
-            <span className={cost2 < 1 ? 'text-green-600 font-bold' : ''}>{formatCents(cost2)}</span>
-          </div>
-        </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -243,6 +270,8 @@ export function ArbitrageView() {
     matches, 
     freshMatches,
     staleMatches,
+    matchesWithValidPrices,
+    matchesAwaitingPrices,
     isLoading, 
     polymarketCount, 
     kalshiCount,
@@ -314,6 +343,14 @@ export function ArbitrageView() {
                   {summary.matchedMarkets} pairs
                 </Badge>
               </div>
+              {matchesAwaitingPrices > 0 && (
+                <div className="flex items-center gap-1.5 text-amber-600">
+                  <Timer className="w-3.5 h-3.5" />
+                  <span className="text-xs">
+                    {matchesWithValidPrices}/{matches.length} with live prices
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </CardContent>
