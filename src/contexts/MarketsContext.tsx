@@ -112,47 +112,41 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   // WebSocket price update handler
   const handleWsPriceUpdate = useCallback((tokenId: string, price: number, timestamp: number) => {
     const priceUpdatedAt = new Date(timestamp * 1000);
-    setMarkets(prev => prev.map(market => {
-      if (market.sideA.tokenId === tokenId) {
+
+    // IMPORTANT: update ONLY the token that changed.
+    // Polymarket YES/NO token prices are not guaranteed to sum to 1, so we must not force a complement.
+    setMarkets((prev) =>
+      prev.map((market) => {
+        const isSideA = market.sideA.tokenId === tokenId;
+        const isSideB = market.sideB.tokenId === tokenId;
+
+        if (!isSideA && !isSideB) return market;
+
         return {
           ...market,
-          sideA: {
-            ...market.sideA,
-            price,
-            probability: price,
-            odds: price > 0 ? 1 / price : null,
-          },
-          sideB: {
-            ...market.sideB,
-            price: 1 - price,
-            probability: 1 - price,
-            odds: (1 - price) > 0 ? 1 / (1 - price) : null,
-          },
+          sideA: isSideA
+            ? {
+                ...market.sideA,
+                price,
+                probability: price,
+                odds: price > 0 ? 1 / price : null,
+              }
+            : market.sideA,
+          sideB: isSideB
+            ? {
+                ...market.sideB,
+                price,
+                probability: price,
+                odds: price > 0 ? 1 / price : null,
+              }
+            : market.sideB,
           lastUpdated: priceUpdatedAt,
+          // Treat WS updates as fresh price updates for freshness filtering.
           lastPriceUpdatedAt: priceUpdatedAt,
         };
-      }
-      if (market.sideB.tokenId === tokenId) {
-        return {
-          ...market,
-          sideA: {
-            ...market.sideA,
-            price: 1 - price,
-            probability: 1 - price,
-            odds: (1 - price) > 0 ? 1 / (1 - price) : null,
-          },
-          sideB: {
-            ...market.sideB,
-            price,
-            probability: price,
-            odds: price > 0 ? 1 / price : null,
-          },
-          lastUpdated: priceUpdatedAt,
-          lastPriceUpdatedAt: priceUpdatedAt,
-        };
-      }
-      return market;
-    }));
+      })
+    );
+
     setLastPriceUpdate(new Date());
   }, []);
 
@@ -357,12 +351,26 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Convert Polymarket market to unified format - memoized to prevent recreation
   const convertPolymarketMarket = useCallback((market: PolymarketMarket): UnifiedMarket => {
-    const isYesNoMarket =
-      market.side_a.label.toLowerCase().includes('yes') ||
-      market.side_b.label.toLowerCase().includes('no');
-
     const sideATokenId = (market.side_a as any).token_id ?? (market.side_a as any).id;
     const sideBTokenId = (market.side_b as any).token_id ?? (market.side_b as any).id;
+
+    const aLabel = market.side_a.label.toLowerCase();
+    const bLabel = market.side_b.label.toLowerCase();
+
+    const aIsYes = aLabel.includes('yes');
+    const aIsNo = aLabel.includes('no');
+    const bIsYes = bLabel.includes('yes');
+    const bIsNo = bLabel.includes('no');
+
+    const isYesNoMarket = (aIsYes && bIsNo) || (aIsNo && bIsYes);
+
+    // Ensure sideA is always YES and sideB is always NO for YES/NO markets.
+    const yesTokenId = isYesNoMarket
+      ? (aIsYes ? sideATokenId : sideBTokenId)
+      : sideATokenId;
+    const noTokenId = isYesNoMarket
+      ? (aIsNo ? sideATokenId : sideBTokenId)
+      : sideBTokenId;
 
     const eventSlug = extractEventSlug(market.market_slug);
 
@@ -378,14 +386,14 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       endTime: new Date(market.end_time * 1000),
       status: market.status,
       sideA: {
-        tokenId: sideATokenId,
+        tokenId: yesTokenId,
         label: isYesNoMarket ? 'Yes' : market.side_a.label,
         price: 0.5,
         probability: 0.5,
         odds: 2,
       },
       sideB: {
-        tokenId: sideBTokenId,
+        tokenId: noTokenId,
         label: isYesNoMarket ? 'No' : market.side_b.label,
         price: 0.5,
         probability: 0.5,
@@ -527,74 +535,106 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   ) => {
     // Only warm prices for matched Polymarket markets
     const matchedIds = matchedIdsRef.current;
-    const targets = discoveredMarkets
-      .filter(m => 
-        m.platform === 'POLYMARKET' && 
+    const targets = discoveredMarkets.filter(
+      (m) =>
+        m.platform === 'POLYMARKET' &&
         m.sideA.tokenId &&
+        m.sideB.tokenId &&
         matchedIds.has(m.id)
-      );
+    );
 
     if (targets.length === 0) {
       console.log('[Price Warmup] No matched markets to warm');
       return;
     }
-    
-    console.log(`[Price Warmup] Warming ${targets.length} matched markets (skipping ${discoveredMarkets.filter(m => m.platform === 'POLYMARKET').length - targets.length} unmatched)`);
 
-    const pending = new Map<string, number>();
-    const BATCH_SIZE = tier === 'free' ? 3 : 10;
+    console.log(
+      `[Price Warmup] Warming ${targets.length} matched markets (skipping ${
+        discoveredMarkets.filter((m) => m.platform === 'POLYMARKET').length - targets.length
+      } unmatched)`
+    );
+
+    // IMPORTANT: Polymarket YES/NO token prices are not guaranteed to sum to 1.
+    // We must fetch BOTH token prices and store them independently.
+    const pending = new Map<string, { priceA?: number; priceB?: number }>();
+
+    // Batch size here is "requests" (2 requests per market)
+    const REQUEST_BATCH_SIZE = tier === 'free' ? 6 : 20;
 
     const flush = () => {
       if (pending.size === 0) return;
       const snapshot = new Map(pending);
       pending.clear();
 
-      setMarkets(prev => prev.map(m => {
-        const priceA = snapshot.get(m.id);
-        if (priceA === undefined) return m;
-        const priceB = 1 - priceA;
-        const now = new Date();
-        return {
-          ...m,
-          sideA: { ...m.sideA, price: priceA, probability: priceA, odds: priceA > 0 ? 1 / priceA : null },
-          sideB: { ...m.sideB, price: priceB, probability: priceB, odds: priceB > 0 ? 1 / priceB : null },
-          lastUpdated: now,
-          lastPriceUpdatedAt: now,
-        };
-      }));
+      const now = new Date();
+      setMarkets((prev) =>
+        prev.map((m) => {
+          const entry = snapshot.get(m.id);
+          if (!entry) return m;
+          if (typeof entry.priceA !== 'number' || typeof entry.priceB !== 'number') return m;
+
+          const priceA = entry.priceA;
+          const priceB = entry.priceB;
+
+          return {
+            ...m,
+            sideA: {
+              ...m.sideA,
+              price: priceA,
+              probability: priceA,
+              odds: priceA > 0 ? 1 / priceA : null,
+            },
+            sideB: {
+              ...m.sideB,
+              price: priceB,
+              probability: priceB,
+              odds: priceB > 0 ? 1 / priceB : null,
+            },
+            lastUpdated: now,
+            lastPriceUpdatedAt: now,
+          };
+        })
+      );
       setLastPriceUpdate(new Date());
     };
 
-    for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+    const jobs = targets.flatMap((market) => [
+      { marketId: market.id, side: 'A' as const, tokenId: market.sideA.tokenId! },
+      { marketId: market.id, side: 'B' as const, tokenId: market.sideB.tokenId! },
+    ]);
+
+    for (let i = 0; i < jobs.length; i += REQUEST_BATCH_SIZE) {
       if (signal?.aborted) break;
 
-      const batch = targets.slice(i, i + BATCH_SIZE);
+      const batch = jobs.slice(i, i + REQUEST_BATCH_SIZE);
       const promises: Promise<void>[] = [];
-      
+
       await globalRateLimiter.acquireStream(batch.length, (index) => {
-        const market = batch[index];
-        const tokenId = market.sideA.tokenId!;
-        
-        const promise = fetch(
-          `https://api.domeapi.io/v1/polymarket/market-price/${tokenId}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            signal,
-          }
-        ).then(async (resp) => {
-          if (!resp.ok) return;
-          const data: PolymarketPriceResponse = await resp.json();
-          if (typeof data.price === 'number') {
-            pending.set(market.id, data.price);
-          }
-        }).catch(() => {});
-        
+        const job = batch[index];
+
+        const promise = fetch(`https://api.domeapi.io/v1/polymarket/market-price/${job.tokenId}`, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          signal,
+        })
+          .then(async (resp) => {
+            if (!resp.ok) return;
+            const data: PolymarketPriceResponse = await resp.json();
+            if (typeof data.price !== 'number') return;
+
+            const prev = pending.get(job.marketId) ?? {};
+            pending.set(job.marketId, {
+              ...prev,
+              ...(job.side === 'A' ? { priceA: data.price } : { priceB: data.price }),
+            });
+          })
+          .catch(() => {});
+
         promises.push(promise);
       });
-      
+
       await Promise.allSettled(promises);
       flush();
     }
@@ -894,25 +934,26 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Fire a single price fetch - uses rate limiter internally
   const firePriceFetch = useCallback((market: UnifiedMarket, apiKey: string) => {
-    const tokenId = market.sideA.tokenId!;
-    
-    // Fire and forget - don't await. Rate limiting happens inside fetchTokenPriceDirect
-    fetchTokenPriceDirect(tokenId, apiKey).then(result => {
-      if (!isPriceUpdatingRef.current) return;
-      
-      if (result.rateLimited) return;
-      
-      if (typeof result.price === 'number') {
-        const priceA = result.price;
-        const priceB = 1 - priceA;
-        // Queue update instead of immediate state change
+    const tokenA = market.sideA.tokenId;
+    const tokenB = market.sideB.tokenId;
+    if (!tokenA || !tokenB) return;
+
+    // Fire and forget - rate limiting happens inside fetchTokenPriceDirect
+    (async () => {
+      const resA = await fetchTokenPriceDirect(tokenA, apiKey);
+      if (!isPriceUpdatingRef.current || resA.rateLimited) return;
+
+      const resB = await fetchTokenPriceDirect(tokenB, apiKey);
+      if (!isPriceUpdatingRef.current || resB.rateLimited) return;
+
+      if (typeof resA.price === 'number' && typeof resB.price === 'number') {
         pendingPriceUpdates.current.set(market.id, {
-          priceA,
-          priceB,
+          priceA: resA.price,
+          priceB: resB.price,
           timestamp: new Date(),
         });
       }
-    });
+    })();
   }, []);
 
   // Track cursor for round-robin price fetching of matched markets
@@ -988,10 +1029,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         ? filteredMarketsRef.current
         : marketsRef.current;
 
-      const tokenMarkets = candidateMarkets.filter(m =>
-        m.platform === 'POLYMARKET' &&
-        m.sideA.tokenId &&
-        !failedTokenIds.current.has(m.sideA.tokenId)
+      const tokenMarkets = candidateMarkets.filter(
+        (m) =>
+          m.platform === 'POLYMARKET' &&
+          m.sideA.tokenId &&
+          m.sideB.tokenId &&
+          !failedTokenIds.current.has(m.sideA.tokenId) &&
+          !failedTokenIds.current.has(m.sideB.tokenId)
       );
 
       if (tokenMarkets.length === 0) {
@@ -1000,29 +1044,34 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Prioritize matched markets
-      const matchedMarkets = tokenMarkets.filter(m => matchedIdsRef.current.has(m.id));
+      const matchedMarkets = tokenMarkets.filter((m) => matchedIdsRef.current.has(m.id));
       const targetMarkets = matchedMarkets.length > 0 ? matchedMarkets : tokenMarkets;
 
       // Round-robin through target markets
       const idx = matchedCursorRef.current % targetMarkets.length;
       matchedCursorRef.current = idx + 1;
       const market = targetMarkets[idx];
-      const tokenId = market.sideA.tokenId!;
 
-      // Fetch with rate limiting (waitAndAcquire inside)
-      const result = await fetchTokenPriceDirect(tokenId, apiKey);
-      
-      if (result.rateLimited) {
+      const tokenA = market.sideA.tokenId!;
+      const tokenB = market.sideB.tokenId!;
+
+      // Fetch BOTH token prices (YES + NO)
+      const resA = await fetchTokenPriceDirect(tokenA, apiKey);
+      if (resA.rateLimited) {
         // Already handled inside fetchTokenPriceDirect
         continue;
       }
-      
-      if (typeof result.price === 'number') {
-        const priceA = result.price;
-        const priceB = 1 - priceA;
+
+      const resB = await fetchTokenPriceDirect(tokenB, apiKey);
+      if (resB.rateLimited) {
+        // Already handled inside fetchTokenPriceDirect
+        continue;
+      }
+
+      if (typeof resA.price === 'number' && typeof resB.price === 'number') {
         pendingPriceUpdates.current.set(market.id, {
-          priceA,
-          priceB,
+          priceA: resA.price,
+          priceB: resB.price,
           timestamp: new Date(),
         });
       }
