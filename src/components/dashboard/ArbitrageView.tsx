@@ -812,6 +812,48 @@ export function ArbitrageView() {
           </CardContent>
         </Card>
       )}
+      
+      {/* Matched Contracts Section */}
+      <Card className="mt-6">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+              <Target className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
+              Matched Contracts
+              <Badge variant="secondary" className="ml-1">
+                {matches.length}
+              </Badge>
+            </CardTitle>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="hidden sm:inline">
+                {matchesWithValidPrices} priced • {matchesAwaitingPrices} awaiting
+              </span>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {matches.length > 0 ? (
+            <div className="grid gap-2 sm:gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {matches.map((match) => (
+                <MatchCard 
+                  key={`${match.polymarket.id}-${match.kalshi.id}`}
+                  match={match} 
+                  maxAgeSeconds={settings.maxAgeSeconds}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="py-8 text-center">
+              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-muted flex items-center justify-center">
+                <Search className="w-6 h-6 text-muted-foreground" />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                No matched contracts found yet. Start discovery to find cross-platform pairs.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
