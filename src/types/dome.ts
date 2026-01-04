@@ -91,21 +91,21 @@ export interface UnifiedMarket {
   sideA: {
     tokenId?: string;
     label: string;
-    price: number;
-    probability: number;
+    price: number | null;       // null = not yet fetched from price API
+    probability: number | null; // null = not yet fetched
     odds: number | null;
   };
   sideB: {
     tokenId?: string;
     label: string;
-    price: number;
-    probability: number;
+    price: number | null;       // null = not yet fetched from price API
+    probability: number | null; // null = not yet fetched
     odds: number | null;
   };
   volume?: number;
   volume24h?: number;
   lastUpdated: Date;
-  lastPriceUpdatedAt?: Date; // Timestamp when price was last fetched from API
+  lastPriceUpdatedAt: Date | null; // null = never priced, set ONLY on real price fetch
 }
 
 // Grouped Event Type for UI

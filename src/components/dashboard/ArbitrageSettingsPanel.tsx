@@ -68,6 +68,26 @@ export function ArbitrageSettingsPanel({
             </div>
 
             <div className="space-y-1.5">
+              <Label htmlFor="maxDrift" className="text-sm text-foreground">
+                Max Price Drift (seconds)
+              </Label>
+              <Input
+                id="maxDrift"
+                type="number"
+                min={5}
+                max={300}
+                value={settings.maxDriftSeconds}
+                onChange={(e) =>
+                  updateSettings({ maxDriftSeconds: Math.max(5, parseInt(e.target.value) || defaults.maxDriftSeconds) })
+                }
+                className="h-8"
+              />
+              <p className="text-xs text-muted-foreground">
+                Max time between platform updates (default: {defaults.maxDriftSeconds}s)
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
               <Label htmlFor="maxSkew" className="text-sm text-foreground">
                 Max Time Skew (seconds)
               </Label>
@@ -83,7 +103,7 @@ export function ArbitrageSettingsPanel({
                 className="h-8"
               />
               <p className="text-xs text-muted-foreground">
-                Max time diff between platforms (default: {defaults.maxSkewSeconds}s)
+                Legacy skew for UI display (default: {defaults.maxSkewSeconds}s)
               </p>
             </div>
 

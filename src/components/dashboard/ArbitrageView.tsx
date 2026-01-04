@@ -378,13 +378,13 @@ function ArbitrageCard({
 }
 
 function MatchCard({ match, maxAgeSeconds }: { match: CrossPlatformMatch; maxAgeSeconds: number }) {
-  const polyYes = match.polymarket.sideA.probability;
-  const polyNo = match.polymarket.sideB.probability;
-  const kalshiYes = match.kalshi.sideA.probability;
-  const kalshiNo = match.kalshi.sideB.probability;
+  const polyYes = match.polymarket.sideA.probability ?? 0;
+  const polyNo = match.polymarket.sideB.probability ?? 0;
+  const kalshiYes = match.kalshi.sideA.probability ?? 0;
+  const kalshiNo = match.kalshi.sideB.probability ?? 0;
   
-  const polyHasRealPrice = match.polymarket.lastPriceUpdatedAt !== undefined;
-  const kalshiHasRealPrice = kalshiYes > 0 && kalshiNo > 0;
+  const polyHasRealPrice = match.polymarket.lastPriceUpdatedAt !== null;
+  const kalshiHasRealPrice = match.kalshi.lastPriceUpdatedAt !== null;
   
   const cost1 = kalshiYes + polyNo;
   const cost2 = polyYes + kalshiNo;
