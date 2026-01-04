@@ -7,6 +7,8 @@ export interface ArbitrageSettings {
   minProfitPercent: number;     // Minimum profit % to show opportunity
   kalshiRefreshIntervalSeconds: number; // How often to refresh Kalshi prices
   showStaleOpportunities: boolean; // Show stale opportunities with warning
+  autoRefreshEnabled: boolean;  // Enable auto-refresh of prices
+  autoRefreshIntervalSeconds: number; // Auto-refresh interval
 }
 
 const DEFAULT_SETTINGS: ArbitrageSettings = {
@@ -16,6 +18,8 @@ const DEFAULT_SETTINGS: ArbitrageSettings = {
   minProfitPercent: 0.5,        // 0.5% minimum profit
   kalshiRefreshIntervalSeconds: 30, // Refresh Kalshi every 30s
   showStaleOpportunities: false, // Hide stale by default
+  autoRefreshEnabled: false,    // Auto-refresh disabled by default
+  autoRefreshIntervalSeconds: 60, // Refresh every 60 seconds
 };
 
 const STORAGE_KEY = 'arbitrage-settings';

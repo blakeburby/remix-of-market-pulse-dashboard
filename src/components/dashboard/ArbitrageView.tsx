@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useArbitrage } from '@/hooks/useArbitrage';
 import { useMarkets } from '@/contexts/MarketsContext';
@@ -487,6 +487,60 @@ export function ArbitrageView() {
   const [sortBy, setSortBy] = useState<SortOption>('profit');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [nextRefreshIn, setNextRefreshIn] = useState<number>(0);
+  const autoRefreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Auto-refresh logic
+  useEffect(() => {
+    // Clear existing timers
+    if (autoRefreshTimerRef.current) {
+      clearInterval(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+
+    if (settings.autoRefreshEnabled && matches.length > 0) {
+      const intervalMs = settings.autoRefreshIntervalSeconds * 1000;
+      setNextRefreshIn(settings.autoRefreshIntervalSeconds);
+
+      // Countdown timer (updates every second)
+      countdownTimerRef.current = setInterval(() => {
+        setNextRefreshIn(prev => {
+          if (prev <= 1) {
+            return settings.autoRefreshIntervalSeconds;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      // Auto-refresh timer
+      autoRefreshTimerRef.current = setInterval(() => {
+        if (!isRefreshingAllPrices) {
+          refreshAllMatchedPrices();
+        }
+      }, intervalMs);
+
+      // Initial refresh if enabled
+      if (!isRefreshingAllPrices) {
+        refreshAllMatchedPrices();
+      }
+    } else {
+      setNextRefreshIn(0);
+    }
+
+    return () => {
+      if (autoRefreshTimerRef.current) {
+        clearInterval(autoRefreshTimerRef.current);
+      }
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+      }
+    };
+  }, [settings.autoRefreshEnabled, settings.autoRefreshIntervalSeconds, matches.length, refreshAllMatchedPrices]);
 
   // Filter and sort opportunities
   const displayOpportunities = useMemo(() => {
@@ -732,16 +786,24 @@ export function ArbitrageView() {
           </div>
         </div>
         
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={refreshAllMatchedPrices}
-          disabled={isRefreshingAllPrices}
-          className="h-9 self-start sm:self-center"
-        >
-          <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingAllPrices ? 'animate-pulse text-chart-4' : ''}`} />
-          {isRefreshingAllPrices ? 'Refreshing...' : 'Refresh All Prices'}
-        </Button>
+        <div className="flex items-center gap-2">
+          {settings.autoRefreshEnabled && nextRefreshIn > 0 && (
+            <Badge variant="secondary" className="text-xs px-2 py-1">
+              <RefreshCw className="w-3 h-3 mr-1 animate-spin" style={{ animationDuration: '3s' }} />
+              {nextRefreshIn}s
+            </Badge>
+          )}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={refreshAllMatchedPrices}
+            disabled={isRefreshingAllPrices}
+            className="h-9"
+          >
+            <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingAllPrices ? 'animate-pulse text-chart-4' : ''}`} />
+            {isRefreshingAllPrices ? 'Refreshing...' : 'Refresh All Prices'}
+          </Button>
+        </div>
       </div>
       
       {/* Arbitrage Opportunities */}
