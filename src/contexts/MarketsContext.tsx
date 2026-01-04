@@ -31,6 +31,7 @@ interface MarketsContextType {
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   wsSubscriptionCount: number;
   isRefreshingKalshi: boolean;
+  isRefreshingAllPrices: boolean;
   lastKalshiRefresh: Date | null;
   matchedPolymarketIds: Set<string>;
   setFilters: (filters: Partial<MarketFilters>) => void;
@@ -39,6 +40,7 @@ interface MarketsContextType {
   startPriceUpdates: () => void;
   stopPriceUpdates: () => void;
   refreshKalshiPrices: () => void;
+  refreshAllMatchedPrices: () => void;
   setMatchedPolymarketIds: (ids: Set<string>) => void;
 }
 
@@ -77,6 +79,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [discoveryProgress, setDiscoveryProgress] = useState<DiscoveryProgress | null>(null);
   const [liveRpm, setLiveRpm] = useState(0);
   const [isRefreshingKalshi, setIsRefreshingKalshi] = useState(false);
+  const [isRefreshingAllPrices, setIsRefreshingAllPrices] = useState(false);
   const [lastKalshiRefresh, setLastKalshiRefresh] = useState<Date | null>(null);
   const [matchedPolymarketIds, setMatchedPolymarketIds] = useState<Set<string>>(new Set());
 
@@ -1285,7 +1288,43 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsRefreshingKalshi(false);
     }
-  }, [getApiKey, fetchMatchedKalshiPrices, applyKalshiPriceUpdates]);
+  }, [getApiKey, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, isRefreshingKalshi]);
+
+  // Force refresh ALL prices for matched markets (both Polymarket and Kalshi)
+  const refreshAllMatchedPrices = useCallback(async () => {
+    if (isRefreshingAllPrices) return;
+    
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    
+    setIsRefreshingAllPrices(true);
+    console.log(`[Refresh All] Starting refresh for ${matchedPolymarketIds.size} matched markets`);
+    
+    try {
+      // Refresh Polymarket prices
+      await warmMatchedPolymarketPrices(markets, apiKey);
+      console.log('[Refresh All] Polymarket prices updated');
+      
+      // Refresh Kalshi prices
+      const kalshiUpdates = await fetchMatchedKalshiPrices(apiKey);
+      applyKalshiPriceUpdates(kalshiUpdates);
+      console.log(`[Refresh All] Kalshi prices updated (${kalshiUpdates.size} markets)`);
+      
+      toast({
+        title: "Prices refreshed",
+        description: `Updated prices for ${matchedPolymarketIds.size} Polymarket and ${kalshiUpdates.size} Kalshi markets`,
+      });
+    } catch (error) {
+      console.error('[Refresh All] Error:', error);
+      toast({
+        title: "Refresh failed",
+        description: "Some prices may not have been updated",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshingAllPrices(false);
+    }
+  }, [getApiKey, matchedPolymarketIds.size, markets, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, isRefreshingAllPrices]);
 
   // Update matched Kalshi tickers whenever matches change
   useEffect(() => {
@@ -1396,6 +1435,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       wsStatus,
       wsSubscriptionCount,
       isRefreshingKalshi,
+      isRefreshingAllPrices,
       lastKalshiRefresh,
       matchedPolymarketIds,
       setFilters,
@@ -1404,6 +1444,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       startPriceUpdates,
       stopPriceUpdates,
       refreshKalshiPrices,
+      refreshAllMatchedPrices,
       setMatchedPolymarketIds,
     }}>
       {children}
@@ -1454,6 +1495,7 @@ export function useMarkets(): MarketsContextType {
     wsStatus: 'disconnected',
     wsSubscriptionCount: 0,
     isRefreshingKalshi: false,
+    isRefreshingAllPrices: false,
     lastKalshiRefresh: null,
     matchedPolymarketIds: new Set(),
     setFilters: () => undefined,
@@ -1463,5 +1505,6 @@ export function useMarkets(): MarketsContextType {
     stopPriceUpdates: () => undefined,
     setMatchedPolymarketIds: () => undefined,
     refreshKalshiPrices: () => undefined,
+    refreshAllMatchedPrices: () => undefined,
   };
 }
