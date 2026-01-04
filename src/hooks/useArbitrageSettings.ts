@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 
 export interface ArbitrageSettings {
   maxAgeSeconds: number;        // Max age for a price to be considered fresh
-  maxSkewSeconds: number;       // Max time difference between platforms
+  maxSkewSeconds: number;       // Max time difference between platforms (legacy, less strict)
+  maxDriftSeconds: number;      // Max timestamp drift between platforms for arbitrage
   minProfitPercent: number;     // Minimum profit % to show opportunity
   kalshiRefreshIntervalSeconds: number; // How often to refresh Kalshi prices
   showStaleOpportunities: boolean; // Show stale opportunities with warning
@@ -10,7 +11,8 @@ export interface ArbitrageSettings {
 
 const DEFAULT_SETTINGS: ArbitrageSettings = {
   maxAgeSeconds: 120,           // 2 minutes
-  maxSkewSeconds: 900,          // 15 minutes
+  maxSkewSeconds: 900,          // 15 minutes (legacy)
+  maxDriftSeconds: 30,          // 30 seconds max drift for arbitrage
   minProfitPercent: 0.5,        // 0.5% minimum profit
   kalshiRefreshIntervalSeconds: 30, // Refresh Kalshi every 30s
   showStaleOpportunities: false, // Hide stale by default

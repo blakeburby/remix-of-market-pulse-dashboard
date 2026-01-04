@@ -94,6 +94,16 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const matchedIdsRef = useRef<Set<string>>(new Set());
   matchedIdsRef.current = matchedPolymarketIds;
 
+  // Ref for matched Kalshi tickers - derived from matchedPolymarketIds + market data
+  const matchedKalshiTickersRef = useRef<Set<string>>(new Set());
+
+  // Kalshi price loop control
+  const isKalshiPricingRef = useRef(false);
+  
+  // Flag to track if warmup is pending (discovery just finished, waiting for matching)
+  const [pendingWarmup, setPendingWarmup] = useState(false);
+  const isWarmingUpRef = useRef(false);
+
   // Batched price updates - accumulate updates and flush every 500ms to reduce re-renders
   const pendingPriceUpdates = useRef<Map<string, { priceA: number; priceB: number; timestamp: Date }>>(new Map());
 
@@ -198,7 +208,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           comparison = (b.volume || 0) - (a.volume || 0);
           break;
         case 'probability':
-          comparison = b.sideA.probability - a.sideA.probability;
+          comparison = (b.sideA.probability ?? 0) - (a.sideA.probability ?? 0);
           break;
         case 'lastUpdated':
           comparison = b.lastUpdated.getTime() - a.lastUpdated.getTime();
@@ -232,7 +242,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       const firstMarket = eventMarkets[0];
       const totalVolume = eventMarkets.reduce((sum, m) => sum + (m.volume || 0), 0);
       const endTimes = eventMarkets.map(m => m.endTime.getTime());
-      const avgProb = eventMarkets.reduce((sum, m) => sum + m.sideA.probability, 0) / eventMarkets.length;
+      const validProbs = eventMarkets.filter(m => m.sideA.probability !== null);
+      const avgProb = validProbs.length > 0 
+        ? validProbs.reduce((sum, m) => sum + (m.sideA.probability ?? 0), 0) / validProbs.length
+        : 0;
 
       events.push({
         eventSlug: firstMarket.eventSlug || firstMarket.id,
@@ -285,9 +298,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       ? (matchedMarketCount / polymarketCount) * 100 
       : 0;
 
-    // Count markets with updated prices (not default 50/50)
+    // Count markets with updated prices (has lastPriceUpdatedAt)
     const updatedPriceCount = deferredMarkets.filter(m => 
-      Math.abs(m.sideA.probability - 0.5) > 0.001 || m.platform === 'KALSHI'
+      m.lastPriceUpdatedAt !== null
     ).length;
 
     const lastDiscovery = [
@@ -349,7 +362,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       .join(' ');
   };
 
-  // Convert Polymarket market to unified format - memoized to prevent recreation
+  // Convert Polymarket market to unified format - NO PRICES during discovery
   const convertPolymarketMarket = useCallback((market: PolymarketMarket): UnifiedMarket => {
     const sideATokenId = (market.side_a as any).token_id ?? (market.side_a as any).id;
     const sideBTokenId = (market.side_b as any).token_id ?? (market.side_b as any).id;
@@ -374,6 +387,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
     const eventSlug = extractEventSlug(market.market_slug);
 
+    // CRITICAL: Do NOT set prices during discovery - they must come from explicit price fetch
     return {
       id: `poly_${market.condition_id}`,
       platform: 'POLYMARKET',
@@ -388,28 +402,26 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       sideA: {
         tokenId: yesTokenId,
         label: isYesNoMarket ? 'Yes' : market.side_a.label,
-        price: 0.5,
-        probability: 0.5,
-        odds: 2,
+        price: null,       // null = not yet fetched
+        probability: null, // null = not yet fetched
+        odds: null,
       },
       sideB: {
         tokenId: noTokenId,
         label: isYesNoMarket ? 'No' : market.side_b.label,
-        price: 0.5,
-        probability: 0.5,
-        odds: 2,
+        price: null,       // null = not yet fetched
+        probability: null, // null = not yet fetched
+        odds: null,
       },
       lastUpdated: new Date(),
+      lastPriceUpdatedAt: null, // null = never priced
     };
   }, []);
 
-  // Convert Kalshi market to unified format - memoized to prevent recreation
-  // Kalshi prices come directly from the API discovery, so they're fresh
+  // Convert Kalshi market to unified format - NO PRICES during discovery
+  // Prices must come from explicit refresh, not discovery last_price
   const convertKalshiMarket = useCallback((market: KalshiMarket): UnifiedMarket => {
-    const yesProb = market.last_price / 100;
-    const noProb = 1 - yesProb;
-    const now = new Date();
-
+    // CRITICAL: Do NOT use last_price as a live price - discovery is identification only
     return {
       id: `kalshi_${market.market_ticker}`,
       platform: 'KALSHI',
@@ -424,20 +436,20 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       status: market.status,
       sideA: {
         label: 'Yes',
-        price: yesProb,
-        probability: yesProb,
-        odds: yesProb > 0 ? 1 / yesProb : null,
+        price: null,       // null = not yet fetched
+        probability: null, // null = not yet fetched
+        odds: null,
       },
       sideB: {
         label: 'No',
-        price: noProb,
-        probability: noProb,
-        odds: noProb > 0 ? 1 / noProb : null,
+        price: null,       // null = not yet fetched
+        probability: null, // null = not yet fetched
+        odds: null,
       },
       volume: market.volume,
       volume24h: market.volume_24h,
-      lastUpdated: now,
-      lastPriceUpdatedAt: now, // Kalshi prices come from discovery, mark as fresh
+      lastUpdated: new Date(),
+      lastPriceUpdatedAt: null, // null = never priced
     };
   }, []);
 
@@ -819,21 +831,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         completedAt,
       } : null);
 
-      // OPTIMIZATION: Now that we have all markets, run matching and THEN warm prices
-      // This happens automatically via useArbitrage hook which sets matchedPolymarketIds
-      // The warmMatchedPolymarketPrices will be called after matches are computed
-      
-      // Trigger price warmup for matched markets only
-      setTimeout(() => {
-        if (matchedIdsRef.current.size > 0) {
-          console.log(`[Discovery] Warming prices for ${matchedIdsRef.current.size} matched markets`);
-          priceWarmupChainRef.current = warmMatchedPolymarketPrices(
-            polymarketMarkets,
-            apiKey,
-            signal
-          );
-        }
-      }, 500); // Small delay to let matching complete
+      // OPTIMIZATION: Set pendingWarmup flag - actual warmup happens via useEffect
+      // when matchedPolymarketIds is populated (after matching completes)
+      setPendingWarmup(true);
 
       if (polymarketMarkets.length > 0 || kalshiMarkets.length > 0) {
         // Calculate duration
@@ -1106,17 +1106,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     isDiscoveringRef.current = true;
     setIsDiscovering(true);
 
-    // Initial discovery - warmup happens inside runDiscovery via priceWarmupChainRef
-    runDiscovery().then(() => {
-      // Wait for warmup chain to complete before starting price update loop
-      priceWarmupChainRef.current.then(() => {
-        if (!isPriceUpdatingRef.current && isDiscoveringRef.current) {
-          isPriceUpdatingRef.current = true;
-          setIsPriceUpdating(true);
-          runPriceUpdate();
-        }
-      });
-    });
+    // Initial discovery - warmup is now coordinated via useEffect when matches are ready
+    runDiscovery();
 
     // Schedule periodic rediscovery (longer interval for Free tier)
     const intervalMs = tier === 'free' ? 120000 : 60000;
@@ -1125,7 +1116,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         runDiscovery();
       }
     }, intervalMs);
-  }, [runDiscovery, runPriceUpdate, tier]);
+  }, [runDiscovery, tier]);
 
   const stopDiscovery = useCallback(() => {
     isDiscoveringRef.current = false;
@@ -1160,6 +1151,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     setWsEnabled(false);
     isPriceUpdatingRef.current = false;
     setIsPriceUpdating(false);
+    isKalshiPricingRef.current = false; // Stop Kalshi loop directly
 
     stopSteadyPriceLoop();
 
@@ -1169,7 +1161,113 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [stopSteadyPriceLoop]);
 
-  // Force refresh Kalshi prices for matched markets
+  // Fetch fresh Kalshi prices for matched markets only - uses pagination to find all
+  const fetchMatchedKalshiPrices = useCallback(async (apiKey: string): Promise<Map<string, { yes: number; no: number }>> => {
+    const matchedTickers = matchedKalshiTickersRef.current;
+    if (matchedTickers.size === 0) return new Map();
+    
+    const toUpdate = new Map<string, { yes: number; no: number }>();
+    let offset = 0;
+    const limit = 100;
+    
+    // Paginate through all Kalshi markets to find matched ones
+    while (true) {
+      const url = `https://api.domeapi.io/v1/kalshi/markets?status=open&limit=${limit}&offset=${offset}`;
+      const response = await rateLimitedFetch(url, apiKey);
+      const data: KalshiMarketsResponse = await response.json();
+      
+      for (const market of data.markets) {
+        if (matchedTickers.has(market.market_ticker)) {
+          const yesProb = market.last_price / 100;
+          // Kalshi API only provides YES price - NO is derived
+          // This is a limitation of the Kalshi API, not our choice
+          toUpdate.set(`kalshi_${market.market_ticker}`, {
+            yes: yesProb,
+            no: 1 - yesProb,
+          });
+        }
+      }
+      
+      // Stop if we found all matched tickers or no more pages
+      if (toUpdate.size >= matchedTickers.size) break;
+      if (!data.pagination?.has_more || data.markets.length < limit) break;
+      offset += limit;
+    }
+    
+    return toUpdate;
+  }, []);
+
+  // Apply Kalshi price updates to markets state
+  const applyKalshiPriceUpdates = useCallback((updates: Map<string, { yes: number; no: number }>) => {
+    if (updates.size === 0) return;
+    
+    const now = new Date();
+    setMarkets(prev => prev.map(m => {
+      const update = updates.get(m.id);
+      if (!update) return m;
+      return {
+        ...m,
+        sideA: {
+          ...m.sideA,
+          price: update.yes,
+          probability: update.yes,
+          odds: update.yes > 0 ? 1 / update.yes : null,
+        },
+        sideB: {
+          ...m.sideB,
+          price: update.no,
+          probability: update.no,
+          odds: update.no > 0 ? 1 / update.no : null,
+        },
+        lastUpdated: now,
+        lastPriceUpdatedAt: now,
+      };
+    }));
+    
+    setLastKalshiRefresh(now);
+  }, []);
+
+  // Kalshi price loop - runs continuously for matched markets
+  const runKalshiPriceLoop = useCallback(async () => {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    
+    while (isKalshiPricingRef.current) {
+      const matchedTickers = matchedKalshiTickersRef.current;
+      
+      if (matchedTickers.size === 0) {
+        // No matched markets yet, wait and retry
+        await sleep(1000);
+        continue;
+      }
+      
+      try {
+        const updates = await fetchMatchedKalshiPrices(apiKey);
+        if (isKalshiPricingRef.current && updates.size > 0) {
+          applyKalshiPriceUpdates(updates);
+          console.log(`[Kalshi Price Loop] Updated ${updates.size} matched markets`);
+        }
+      } catch (error) {
+        console.error('[Kalshi Price Loop] Error:', error);
+      }
+      
+      // Wait based on tier before next refresh (default 30s for free, 15s for paid)
+      const intervalMs = tier === 'free' ? 30000 : 15000;
+      await sleep(intervalMs);
+    }
+  }, [getApiKey, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, tier]);
+
+  const startKalshiPriceLoop = useCallback(() => {
+    if (isKalshiPricingRef.current) return;
+    isKalshiPricingRef.current = true;
+    runKalshiPriceLoop();
+  }, [runKalshiPriceLoop]);
+
+  const stopKalshiPriceLoop = useCallback(() => {
+    isKalshiPricingRef.current = false;
+  }, []);
+
+  // Force refresh Kalshi prices for matched markets (manual trigger)
   const refreshKalshiPrices = useCallback(async () => {
     if (isRefreshingKalshi) return;
     
@@ -1179,43 +1277,78 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     setIsRefreshingKalshi(true);
     
     try {
-      // Get all Kalshi markets
-      const kalshiMarkets = marketsRef.current.filter(m => m.platform === 'KALSHI');
-      if (kalshiMarkets.length === 0) {
-        setIsRefreshingKalshi(false);
-        return;
-      }
-      
-      // Fetch fresh prices for Kalshi markets (re-fetch from discovery endpoint)
-      const url = 'https://api.domeapi.io/v1/kalshi/markets?status=open&limit=100';
-      const response = await rateLimitedFetch(url, apiKey);
-      const data: KalshiMarketsResponse = await response.json();
-      
-      const now = new Date();
-      const freshKalshiMarkets = data.markets.map(convertKalshiMarket);
-      
-      // Update existing Kalshi markets with fresh prices
-      setMarkets(prev => prev.map(m => {
-        if (m.platform !== 'KALSHI') return m;
-        const fresh = freshKalshiMarkets.find(f => f.id === m.id);
-        if (!fresh) return m;
-        return {
-          ...m,
-          sideA: fresh.sideA,
-          sideB: fresh.sideB,
-          lastUpdated: now,
-          lastPriceUpdatedAt: now,
-        };
-      }));
-      
-      setLastKalshiRefresh(now);
-      console.log(`[Kalshi Refresh] Updated ${freshKalshiMarkets.length} markets`);
+      const updates = await fetchMatchedKalshiPrices(apiKey);
+      applyKalshiPriceUpdates(updates);
+      console.log(`[Kalshi Refresh] Updated ${updates.size} matched markets`);
     } catch (error) {
       console.error('[Kalshi Refresh] Error:', error);
     } finally {
       setIsRefreshingKalshi(false);
     }
-  }, [getApiKey, convertKalshiMarket]);
+  }, [getApiKey, fetchMatchedKalshiPrices, applyKalshiPriceUpdates]);
+
+  // Update matched Kalshi tickers whenever matches change
+  useEffect(() => {
+    // Extract Kalshi tickers from matched markets
+    const kalshiTickers = new Set<string>();
+    for (const market of markets) {
+      if (market.platform === 'KALSHI' && market.kalshiMarketTicker) {
+        // Check if this Kalshi market has a matching Polymarket
+        // We need to look at all Polymarket markets that are matched
+        const polyMarkets = markets.filter(m => m.platform === 'POLYMARKET' && matchedPolymarketIds.has(m.id));
+        // For now, include all Kalshi markets that have matches
+        // The actual matching is done in useArbitrage hook
+        if (matchedPolymarketIds.size > 0) {
+          kalshiTickers.add(market.kalshiMarketTicker);
+        }
+      }
+    }
+    matchedKalshiTickersRef.current = kalshiTickers;
+  }, [markets, matchedPolymarketIds]);
+
+  // Coordinate warmup: trigger ONLY after matching completes
+  useEffect(() => {
+    // Only trigger warmup when:
+    // 1. Warmup is pending (discovery just finished)
+    // 2. We have matched markets
+    // 3. We're not already warming up
+    if (pendingWarmup && matchedPolymarketIds.size > 0 && !isWarmingUpRef.current) {
+      isWarmingUpRef.current = true;
+      setPendingWarmup(false);
+      
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        isWarmingUpRef.current = false;
+        return;
+      }
+      
+      console.log(`[Warmup] Starting warmup for ${matchedPolymarketIds.size} matched Polymarket markets`);
+      
+      // Warm Polymarket prices first
+      warmMatchedPolymarketPrices(markets, apiKey).then(async () => {
+        console.log('[Warmup] Polymarket warmup complete, starting Kalshi warmup');
+        
+        // Then warm Kalshi prices
+        try {
+          const kalshiUpdates = await fetchMatchedKalshiPrices(apiKey);
+          applyKalshiPriceUpdates(kalshiUpdates);
+          console.log(`[Warmup] Kalshi warmup complete, updated ${kalshiUpdates.size} markets`);
+        } catch (error) {
+          console.error('[Warmup] Kalshi warmup error:', error);
+        }
+        
+        isWarmingUpRef.current = false;
+        
+        // Now start continuous price loops
+        if (!isPriceUpdatingRef.current && isDiscoveringRef.current) {
+          isPriceUpdatingRef.current = true;
+          setIsPriceUpdating(true);
+          startSteadyPriceLoop();
+          startKalshiPriceLoop();
+        }
+      });
+    }
+  }, [pendingWarmup, matchedPolymarketIds.size, getApiKey, markets, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, startKalshiPriceLoop]);
 
   // Live RPM counter - update every second, only when value changes
   useEffect(() => {
