@@ -1,13 +1,15 @@
 import { UnifiedMarket, CrossPlatformMatch, ArbitrageOpportunity, Platform } from '@/types/dome';
 import { MarketIndex, buildIndex, findCandidates, addToIndex, createIndex } from './market-index';
+import { validateMatch } from './entity-validator';
 
 // ===== Configuration =====
 const TIME_WINDOW_DAYS = 3; // Stricter: markets must end within 3 days of each other
-const MIN_TITLE_SIMILARITY = 0.20; // Lowered to catch more potential matches
-const MIN_OVERALL_SCORE = 0.30; // Lowered to catch bracket variations
-const MIN_SHARED_TERMS_FOR_CANDIDATE = 1; // Lowered to 1 for better coverage
-const BASE_EVENT_SIMILARITY_BOOST = 0.3; // Bonus for matching base events
-const BRACKET_MATCH_BOOST = 0.2; // Bonus for overlapping bracket ranges
+const MIN_TITLE_SIMILARITY = 0.45; // Increased: at least 45% term overlap required
+const MIN_OVERALL_SCORE = 0.55; // Increased: stronger overall confidence needed
+const MIN_SHARED_TERMS_FOR_CANDIDATE = 2; // Increased: at least 2 shared terms
+const BASE_EVENT_SIMILARITY_BOOST = 0.25; // Reduced: less aggressive bonus
+const BRACKET_MATCH_BOOST = 0.15; // Reduced: less aggressive bracket bonus
+const BRACKET_TOLERANCE = 0.25; // Stricter bracket overlap tolerance
 
 // ===== Entity Patterns =====
 const ENTITY_PATTERNS = {
@@ -158,14 +160,16 @@ function extractBracketRange(title: string): BracketRange | null {
 /**
  * Check if two bracket ranges overlap (with tolerance)
  */
-function areBracketsCompatible(rangeA: BracketRange | null, rangeB: BracketRange | null, tolerance: number = 0.5): boolean {
+function areBracketsCompatible(rangeA: BracketRange | null, rangeB: BracketRange | null): boolean {
   // If neither has a bracket, they're compatible (base event matching)
   if (!rangeA && !rangeB) return true;
   
-  // If only one has a bracket, they might still be the same market (one more specific)
-  if (!rangeA || !rangeB) return true;
+  // If only one has a bracket, they might NOT be the same market
+  // One is asking about a specific range, the other about the general outcome
+  if (!rangeA || !rangeB) return false;
   
-  // Check for overlap with tolerance
+  // Check for overlap with strict tolerance
+  const tolerance = BRACKET_TOLERANCE;
   const aLow = rangeA.low === -Infinity ? rangeA.low : rangeA.low - tolerance;
   const aHigh = rangeA.high === Infinity ? rangeA.high : rangeA.high + tolerance;
   const bLow = rangeB.low === -Infinity ? rangeB.low : rangeB.low - tolerance;
@@ -563,6 +567,10 @@ export function findMatchingMarkets(
       // Skip if time periods don't match (e.g., Q4 vs full year)
       if (hasTimePeriodConflict(polymarket.title, kalshi.title)) continue;
 
+      // NEW: Skip if entity validation fails (different politicians, cryptos, etc.)
+      const entityValidation = validateMatch(polymarket.title, kalshi.title);
+      if (!entityValidation.valid) continue;
+
       // Calculate component scores
       const kalshiTerms = extractKeyTerms(kalshi.title);
       const kalshiEntities = extractEntities(kalshi.title);
@@ -578,27 +586,25 @@ export function findMatchingMarkets(
       // Use the higher of title score or base event score (for bracket markets)
       const effectiveTitleScore = Math.max(titleScore, baseEventScore);
 
-      // Skip if effective title similarity is too low (unless ticker matches or category matches)
-      if (effectiveTitleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.5 && categoryScore < 1) continue;
+      // STRICTER: Remove category-based bypass, require strong title or ticker match
+      if (effectiveTitleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.7) continue;
 
-      // Calculate weighted overall score
-      // Enhanced weights: Base event 30%, Entities 20%, Ticker 15%, Time 10%, Category 15%, Bracket bonus 10%
+      // UPDATED WEIGHTS: Title/Base 35%, Entity 25%, Ticker 15%, Time 10%, Category 10%, Bracket 5%
       let overallScore = 
-        effectiveTitleScore * 0.30 +
-        entityScore * 0.20 +
+        effectiveTitleScore * 0.35 +
+        entityScore * 0.25 +
         tickerScore * 0.15 +
         timeScore * 0.10 +
-        categoryScore * 0.15 +
-        bracketScore * 0.10;
+        categoryScore * 0.10 +
+        bracketScore * 0.05;
 
-      // Bonus for matching base event (important for bracket markets)
-      if (baseEventScore >= 0.7) {
-        overallScore += BASE_EVENT_SIMILARITY_BOOST * 0.3;
+      // REDUCED bonuses
+      if (baseEventScore >= 0.75) {
+        overallScore += BASE_EVENT_SIMILARITY_BOOST * 0.25;
       }
       
-      // Bonus for compatible brackets
-      if (bracketScore >= 0.5) {
-        overallScore += BRACKET_MATCH_BOOST * 0.3;
+      if (bracketScore >= 0.7) {
+        overallScore += BRACKET_MATCH_BOOST * 0.25;
       }
 
       if (overallScore >= MIN_OVERALL_SCORE && (!bestMatch || overallScore > bestMatch.score)) {
@@ -667,6 +673,10 @@ export function findMatchesForNewMarkets(
       // Skip if time periods don't match (e.g., Q4 vs full year)
       if (hasTimePeriodConflict(polymarket.title, kalshi.title)) continue;
       
+      // NEW: Skip if entity validation fails
+      const entityValidation = validateMatch(polymarket.title, kalshi.title);
+      if (!entityValidation.valid) continue;
+      
       const kalshiTerms = extractKeyTerms(kalshi.title);
       const kalshiEntities = extractEntities(kalshi.title);
       
@@ -680,18 +690,20 @@ export function findMatchesForNewMarkets(
       
       const effectiveTitleScore = Math.max(titleScore, baseEventScore);
       
-      if (effectiveTitleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.5 && categoryScore < 1) continue;
+      // STRICTER: Require strong title or ticker match
+      if (effectiveTitleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.7) continue;
       
+      // UPDATED WEIGHTS
       let overallScore = 
-        effectiveTitleScore * 0.30 +
-        entityScore * 0.20 +
+        effectiveTitleScore * 0.35 +
+        entityScore * 0.25 +
         tickerScore * 0.15 +
         timeScore * 0.10 +
-        categoryScore * 0.15 +
-        bracketScore * 0.10;
+        categoryScore * 0.10 +
+        bracketScore * 0.05;
       
-      if (baseEventScore >= 0.7) overallScore += BASE_EVENT_SIMILARITY_BOOST * 0.3;
-      if (bracketScore >= 0.5) overallScore += BRACKET_MATCH_BOOST * 0.3;
+      if (baseEventScore >= 0.75) overallScore += BASE_EVENT_SIMILARITY_BOOST * 0.25;
+      if (bracketScore >= 0.7) overallScore += BRACKET_MATCH_BOOST * 0.25;
       
       if (overallScore >= MIN_OVERALL_SCORE && (!bestMatch || overallScore > bestMatch.score)) {
         bestMatch = {
