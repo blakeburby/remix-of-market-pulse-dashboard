@@ -160,47 +160,51 @@ export function useArbitrage(): UseArbitrageResult {
     // Extract matched Polymarket IDs for priority fetching
     const matchedPolyIds = new Set(matches.map(m => m.polymarket.id));
     
-    // Count matches with valid prices (has lastPriceUpdatedAt)
-    const matchesWithValidPrices = matches.filter(m => 
+    // Matches with valid prices = both platforms have fetched prices (regardless of age)
+    const matchesWithPrices = matches.filter(m => 
       hasLivePrices(m.polymarket) && hasLivePrices(m.kalshi)
-    ).length;
+    );
+    const matchesWithValidPrices = matchesWithPrices.length;
     const matchesAwaitingPrices = matches.length - matchesWithValidPrices;
     
-    // CRITICAL: Only include executable matches for arbitrage calculation
-    // This is the hard gate that ensures arbitrage only appears if executable right now
-    const executableMatches = matches.filter(m => 
-      isMatchExecutable(m, now, settings.maxAgeSeconds, settings.maxDriftSeconds)
-    );
-    
-    // Separate fresh and stale matches for UI display
+    // For UI display: separate fresh and stale matches
     const freshMatches = matches.filter(m => 
       isMatchFresh(m, now, settings.maxAgeSeconds, settings.maxSkewSeconds)
     );
     const staleMatches = matches.filter(m => 
+      hasLivePrices(m.polymarket) && hasLivePrices(m.kalshi) &&
       !isMatchFresh(m, now, settings.maxAgeSeconds, settings.maxSkewSeconds)
     );
     
-    // CRITICAL: Find arbitrage opportunities ONLY from executable matches
-    // This ensures we only show opportunities that can be executed right now
-    const allOpportunities = findArbitrageOpportunities(executableMatches);
+    // Executable matches (fresh prices) for reference
+    const executableMatches = matches.filter(m => 
+      isMatchExecutable(m, now, settings.maxAgeSeconds, settings.maxDriftSeconds)
+    );
+    
+    // Find arbitrage opportunities from ALL matches with valid prices
+    // Show opportunities as long as prices have been pulled, regardless of staleness
+    const allOpportunities = findArbitrageOpportunities(matchesWithPrices);
     
     // Filter out expired opportunities
     const opportunities = filterExpired(allOpportunities);
     
-    // Fresh opportunities = executable + meet profit threshold
-    const freshOpportunities = filterByProfitThreshold(opportunities, settings.minProfitPercent);
-    const lowProfitCount = opportunities.length - freshOpportunities.length;
+    // Apply profit threshold filter
+    const filteredOpportunities = filterByProfitThreshold(opportunities, settings.minProfitPercent);
+    const lowProfitCount = opportunities.length - filteredOpportunities.length;
     
-    // Stale opportunities = opportunities from non-executable matches (for display when toggle is on)
-    // Calculate from stale matches for UI purposes
-    const staleMatchOpportunities = findArbitrageOpportunities(staleMatches);
-    const staleOpportunities = filterByProfitThreshold(
-      filterExpired(staleMatchOpportunities), 
-      settings.minProfitPercent
-    );
+    // Separate fresh vs stale for display purposes (both are shown)
+    const freshOpportunities = filteredOpportunities.filter(opp => {
+      const match = opp.match;
+      return isMatchFresh(match, now, settings.maxAgeSeconds, settings.maxSkewSeconds);
+    });
+    
+    const staleOpportunities = filteredOpportunities.filter(opp => {
+      const match = opp.match;
+      return !isMatchFresh(match, now, settings.maxAgeSeconds, settings.maxSkewSeconds);
+    });
     
     return {
-      opportunities,
+      opportunities: filteredOpportunities, // All opportunities with valid prices
       freshOpportunities,
       staleOpportunities,
       staleCount: staleOpportunities.length,
