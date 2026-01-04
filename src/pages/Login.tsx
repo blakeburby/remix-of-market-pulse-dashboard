@@ -13,6 +13,7 @@ import { Loader2, KeyRound, Building2, Shield, Zap, BarChart3 } from 'lucide-rea
 export default function LoginPage() {
   const [apiKey, setApiKey] = useState('');
   const [tier, setTier] = useState<DomeTier>('free');
+  const [remember, setRemember] = useState(true);
   const { login, isValidating, error, setTier: setAuthTier } = useAuth();
   const navigate = useNavigate();
 
@@ -21,7 +22,7 @@ export default function LoginPage() {
     if (!apiKey.trim()) return;
 
     setAuthTier(tier);
-    const success = await login(apiKey.trim());
+    const success = await login(apiKey.trim(), { remember });
     if (success) {
       navigate('/dashboard');
     }
@@ -102,6 +103,18 @@ export default function LoginPage() {
                   <p className="text-xs text-muted-foreground">
                     Select your Dome API tier to configure rate limiting
                   </p>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="remember" className="text-sm font-medium">Remember on this device</Label>
+                  <input
+                    id="remember"
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => setRemember(e.target.checked)}
+                    disabled={isValidating}
+                    className="h-4 w-4 accent-primary"
+                  />
                 </div>
 
                 {error && (

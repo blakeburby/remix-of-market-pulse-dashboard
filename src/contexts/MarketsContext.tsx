@@ -81,6 +81,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [liveRpm, setLiveRpm] = useState(0);
   const [isRefreshingKalshi, setIsRefreshingKalshi] = useState(false);
   const [isRefreshingAllPrices, setIsRefreshingAllPrices] = useState(false);
+  const isRefreshingAllPricesRef = useRef(false);
   const [lastKalshiRefresh, setLastKalshiRefresh] = useState<Date | null>(null);
   const [matchedPolymarketIds, setMatchedPolymarketIds] = useState<Set<string>>(new Set());
   const [matchedKalshiTickerCount, setMatchedKalshiTickerCount] = useState(0);
@@ -99,13 +100,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const matchedIdsRef = useRef<Set<string>>(new Set());
   matchedIdsRef.current = matchedPolymarketIds;
 
-  // Ref for matched Kalshi tickers - derived from matchedPolymarketIds + market data
+  // Ref for matched Kalshi tickers - provided by matcher (useArbitrage)
   const matchedKalshiTickersRef = useRef<Set<string>>(new Set());
+  const startKalshiPriceLoopRef = useRef<(() => void) | null>(null);
 
   // Kalshi price loop control
   const isKalshiPricingRef = useRef(false);
   
-  // Flag to track if warmup is pending (discovery just finished, waiting for matching)
   const [pendingWarmup, setPendingWarmup] = useState(false);
   const isWarmingUpRef = useRef(false);
 
@@ -1148,8 +1149,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     isPriceUpdatingRef.current = true;
     setIsPriceUpdating(true);
 
-    // Start steady (no-burst) loop
+    // Start steady (no-burst) loop (Polymarket)
     startSteadyPriceLoop();
+
+    // Start Kalshi loop as well (will idle until matched tickers exist)
+    startKalshiPriceLoopRef.current?.();
   }, [startSteadyPriceLoop, tier]);
 
   const stopPriceUpdates = useCallback(() => {
@@ -1166,41 +1170,51 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [stopSteadyPriceLoop]);
 
-  // Fetch fresh Kalshi prices for matched markets only - uses pagination to find all
-  const fetchMatchedKalshiPrices = useCallback(async (apiKey: string): Promise<Map<string, { yes: number; no: number }>> => {
-    const matchedTickers = matchedKalshiTickersRef.current;
-    if (matchedTickers.size === 0) return new Map();
-    
-    const toUpdate = new Map<string, { yes: number; no: number }>();
-    let offset = 0;
-    const limit = 100;
-    
-    // Paginate through all Kalshi markets to find matched ones
-    while (true) {
-      const url = `https://api.domeapi.io/v1/kalshi/markets?status=open&limit=${limit}&offset=${offset}`;
-      const response = await rateLimitedFetch(url, apiKey);
-      const data: KalshiMarketsResponse = await response.json();
-      
-      for (const market of data.markets) {
-        if (matchedTickers.has(market.market_ticker)) {
-          const yesProb = market.last_price / 100;
-          // Kalshi API only provides YES price - NO is derived
-          // This is a limitation of the Kalshi API, not our choice
-          toUpdate.set(`kalshi_${market.market_ticker}`, {
-            yes: yesProb,
-            no: 1 - yesProb,
-          });
+  // Fetch fresh Kalshi prices for matched markets only
+  // (Use ticker-filtered endpoint instead of paginating through the entire market universe)
+  const fetchMatchedKalshiPrices = useCallback(
+    async (apiKey: string): Promise<Map<string, { yes: number; no: number }>> => {
+      const matchedTickers = Array.from(matchedKalshiTickersRef.current);
+      if (matchedTickers.length === 0) return new Map();
+
+      const toUpdate = new Map<string, { yes: number; no: number }>();
+      const CONCURRENCY = tier === 'free' ? 5 : 15;
+
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < matchedTickers.length) {
+          const idx = cursor++;
+          const ticker = matchedTickers[idx];
+          const safeTicker = encodeURIComponent(ticker);
+
+          try {
+            const url = `https://api.domeapi.io/v1/kalshi/markets?market_ticker=${safeTicker}&limit=1`;
+            const response = await rateLimitedFetch(url, apiKey);
+            const data: KalshiMarketsResponse = await response.json();
+            const market = data.markets?.find((m) => m.market_ticker === ticker) ?? data.markets?.[0];
+
+            const lastPrice = market?.last_price;
+            if (typeof lastPrice !== 'number' || lastPrice <= 0) {
+              // 0/undefined = no trades / no liquidity
+              continue;
+            }
+
+            const yesProb = lastPrice / 100;
+            toUpdate.set(`kalshi_${ticker}`, {
+              yes: yesProb,
+              no: 1 - yesProb,
+            });
+          } catch {
+            // ignore individual ticker failures
+          }
         }
-      }
-      
-      // Stop if we found all matched tickers or no more pages
-      if (toUpdate.size >= matchedTickers.size) break;
-      if (!data.pagination?.has_more || data.markets.length < limit) break;
-      offset += limit;
-    }
-    
-    return toUpdate;
-  }, []);
+      };
+
+      await Promise.allSettled(Array.from({ length: Math.min(CONCURRENCY, matchedTickers.length) }, worker));
+      return toUpdate;
+    },
+    [tier]
+  );
 
   // Apply Kalshi price updates to markets state
   const applyKalshiPriceUpdates = useCallback((updates: Map<string, { yes: number; no: number }>) => {
@@ -1268,6 +1282,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     runKalshiPriceLoop();
   }, [runKalshiPriceLoop]);
 
+  // Allow startPriceUpdates (defined earlier) to kick off Kalshi updates.
+  startKalshiPriceLoopRef.current = startKalshiPriceLoop;
+
   const stopKalshiPriceLoop = useCallback(() => {
     isKalshiPricingRef.current = false;
   }, []);
@@ -1300,7 +1317,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Force refresh ALL prices for matched markets (both Polymarket and Kalshi)
   const refreshAllMatchedPrices = useCallback(async () => {
-    if (isRefreshingAllPrices) return;
+    if (isRefreshingAllPricesRef.current) return;
 
     const apiKey = getApiKey();
     if (!apiKey) return;
@@ -1308,6 +1325,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const polyCount = matchedIdsRef.current.size;
     const kalshiCount = matchedKalshiTickersRef.current.size;
 
+    isRefreshingAllPricesRef.current = true;
     setIsRefreshingAllPrices(true);
     console.log(`[Refresh All] Starting refresh (poly=${polyCount}, kalshi=${kalshiCount})`);
 
@@ -1333,9 +1351,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         variant: "destructive",
       });
     } finally {
+      isRefreshingAllPricesRef.current = false;
       setIsRefreshingAllPrices(false);
     }
-  }, [getApiKey, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, isRefreshingAllPrices]);
+  }, [getApiKey, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates]);
 
   // Matched Kalshi tickers are provided by the matcher (useArbitrage) via setMatchedKalshiTickers.
   // (The previous implementation accidentally treated all Kalshi markets as matched, which made refresh extremely slow.)
