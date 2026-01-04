@@ -15,6 +15,7 @@ import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
+import { MatchDetailsPanel } from './MatchDetailsPanel';
 import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check, Star, Filter, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -367,6 +368,9 @@ function ArbitrageCard({
               </Button>
             </Link>
           </div>
+          
+          {/* Match Details Panel */}
+          <MatchDetailsPanel match={match} />
         </div>
       </CardContent>
     </Card>
