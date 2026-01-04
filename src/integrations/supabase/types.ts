@@ -44,6 +44,51 @@ export type Database = {
         }
         Relationships: []
       }
+      mismatch_reports: {
+        Row: {
+          created_at: string
+          device_id: string
+          id: string
+          kalshi_id: string
+          kalshi_ticker: string | null
+          kalshi_title: string
+          match_reason: string | null
+          match_score: number
+          polymarket_id: string
+          polymarket_slug: string | null
+          polymarket_title: string
+          report_reason: string | null
+        }
+        Insert: {
+          created_at?: string
+          device_id: string
+          id?: string
+          kalshi_id: string
+          kalshi_ticker?: string | null
+          kalshi_title: string
+          match_reason?: string | null
+          match_score: number
+          polymarket_id: string
+          polymarket_slug?: string | null
+          polymarket_title: string
+          report_reason?: string | null
+        }
+        Update: {
+          created_at?: string
+          device_id?: string
+          id?: string
+          kalshi_id?: string
+          kalshi_ticker?: string | null
+          kalshi_title?: string
+          match_reason?: string | null
+          match_score?: number
+          polymarket_id?: string
+          polymarket_slug?: string | null
+          polymarket_title?: string
+          report_reason?: string | null
+        }
+        Relationships: []
+      }
       watchlist_items: {
         Row: {
           created_at: string
