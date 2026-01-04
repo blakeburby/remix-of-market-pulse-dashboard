@@ -482,7 +482,7 @@ export function ArbitrageView() {
     updateSettings,
   } = useArbitrage();
   
-  const { refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary } = useMarkets();
+  const { refreshAllMatchedPrices, isRefreshingAllPrices, refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary } = useMarkets();
   const { isInWatchlist, toggleWatchlist } = useWatchlist();
   const [sortBy, setSortBy] = useState<SortOption>('profit');
   const [searchQuery, setSearchQuery] = useState('');
@@ -735,17 +735,12 @@ export function ArbitrageView() {
         <Button 
           variant="outline" 
           size="sm" 
-          onClick={refreshKalshiPrices}
-          disabled={isRefreshingKalshi}
+          onClick={refreshAllMatchedPrices}
+          disabled={isRefreshingAllPrices}
           className="h-9 self-start sm:self-center"
         >
-          <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingKalshi ? 'animate-pulse text-chart-4' : ''}`} />
-          Refresh Prices
-          {lastKalshiRefresh && (
-            <Badge variant="secondary" className="ml-2 text-[10px] px-1.5">
-              {formatAge(lastKalshiRefresh)}
-            </Badge>
-          )}
+          <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingAllPrices ? 'animate-pulse text-chart-4' : ''}`} />
+          {isRefreshingAllPrices ? 'Refreshing...' : 'Refresh All Prices'}
         </Button>
       </div>
       
@@ -781,11 +776,11 @@ export function ArbitrageView() {
             <Button 
               variant="outline" 
               size="sm" 
-              onClick={refreshKalshiPrices}
-              disabled={isRefreshingKalshi}
+              onClick={refreshAllMatchedPrices}
+              disabled={isRefreshingAllPrices}
             >
-              <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingKalshi ? 'animate-pulse' : ''}`} />
-              Refresh Now
+              <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingAllPrices ? 'animate-pulse' : ''}`} />
+              {isRefreshingAllPrices ? 'Refreshing...' : 'Refresh Now'}
             </Button>
           </CardContent>
         </Card>
