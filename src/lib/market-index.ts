@@ -154,11 +154,12 @@ export function removeFromIndex(index: MarketIndex, marketId: string): void {
  * Find candidate markets that might match a given market
  * Returns markets that share at least MIN_SHARED_TERMS terms
  * Enhanced: Also searches by base event terms for bracket-market matching
+ * STRICTER: Requires minSharedTerms=2 by default
  */
 export function findCandidates(
   index: MarketIndex,
   market: UnifiedMarket,
-  minSharedTerms: number = 1
+  minSharedTerms: number = 2
 ): UnifiedMarket[] {
   const terms = extractTerms(market.title);
   const baseTerms = extractBaseEventTerms(market.title);
