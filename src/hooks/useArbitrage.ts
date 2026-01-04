@@ -144,7 +144,7 @@ function filterByProfitThreshold(
 }
 
 export function useArbitrage(): UseArbitrageResult {
-  const { markets, isDiscovering, isPriceUpdating, setMatchedPolymarketIds } = useMarkets();
+  const { markets, isDiscovering, isPriceUpdating, setMatchedPolymarketIds, setMatchedKalshiTickers } = useMarkets();
   const { settings, updateSettings } = useArbitrageSettings();
   
   const result = useMemo(() => {
@@ -157,8 +157,13 @@ export function useArbitrage(): UseArbitrageResult {
     // Find matching markets (based on title/event similarity)
     const matches = findMatchingMarkets(polymarkets, kalshiMarkets);
     
-    // Extract matched Polymarket IDs for priority fetching
+    // Extract matched IDs for priority fetching
     const matchedPolyIds = new Set(matches.map(m => m.polymarket.id));
+    const matchedKalshiTickers = new Set(
+      matches
+        .map(m => m.kalshi.kalshiMarketTicker)
+        .filter((t): t is string => typeof t === 'string' && t.length > 0)
+    );
     
     // Matches with valid prices = both platforms have fetched prices (regardless of age)
     const matchesWithPrices = matches.filter(m => 
@@ -218,13 +223,15 @@ export function useArbitrage(): UseArbitrageResult {
       polymarketCount: polymarkets.length,
       kalshiCount: kalshiMarkets.length,
       matchedPolyIds,
+      matchedKalshiTickers,
     };
   }, [markets, settings]);
   
-  // Update matched Polymarket IDs for priority price fetching
+  // Update matched IDs for priority price fetching
   useEffect(() => {
     setMatchedPolymarketIds(result.matchedPolyIds);
-  }, [result.matchedPolyIds, setMatchedPolymarketIds]);
+    setMatchedKalshiTickers(result.matchedKalshiTickers);
+  }, [result.matchedPolyIds, result.matchedKalshiTickers, setMatchedPolymarketIds, setMatchedKalshiTickers]);
   
   return {
     opportunities: result.opportunities,
