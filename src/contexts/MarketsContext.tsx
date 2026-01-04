@@ -12,6 +12,7 @@ import {
   PolymarketPriceResponse,
   GroupedEvent,
   DiscoveryProgress,
+  DiscoveryStatus,
 } from '@/types/dome';
 import { useAuth } from '@/contexts/AuthContext';
 import { globalRateLimiter } from '@/lib/rate-limiter';
@@ -621,11 +622,21 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }));
 
     // Initialize discovery progress
-    setDiscoveryProgress(prev => ({
-      polymarket: prev?.polymarket ?? { offset: 0, found: 0, hasMore: true },
-      kalshi: prev?.kalshi ?? { offset: 0, found: 0, hasMore: true },
-      [platform.toLowerCase()]: { offset: 0, found: 0, hasMore: true },
-    } as DiscoveryProgress));
+    setDiscoveryProgress(prev => {
+      const base = {
+        polymarket: prev?.polymarket ?? { offset: 0, found: 0, hasMore: true },
+        kalshi: prev?.kalshi ?? { offset: 0, found: 0, hasMore: true },
+        status: prev?.status ?? 'running' as const,
+        startedAt: prev?.startedAt ?? new Date(),
+        completedAt: prev?.completedAt ?? null,
+      };
+      if (platform === 'POLYMARKET') {
+        base.polymarket = { offset: 0, found: 0, hasMore: true };
+      } else {
+        base.kalshi = { offset: 0, found: 0, hasMore: true };
+      }
+      return base;
+    });
 
     try {
       while (true) {
@@ -654,14 +665,16 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         allMarkets.push(...pageMarkets);
 
         // Update discovery progress
-        setDiscoveryProgress(prev => ({
-          ...prev!,
-          [platform.toLowerCase()]: { 
-            offset: offset + limit, 
-            found: allMarkets.length, 
-            hasMore 
-          },
-        } as DiscoveryProgress));
+        setDiscoveryProgress(prev => {
+          if (!prev) return prev;
+          const updated = { ...prev };
+          if (platform === 'POLYMARKET') {
+            updated.polymarket = { offset: offset + limit, found: allMarkets.length, hasMore };
+          } else {
+            updated.kalshi = { offset: offset + limit, found: allMarkets.length, hasMore };
+          }
+          return updated;
+        });
 
         // Continuously update markets after each page
         setMarkets(prev => {
@@ -700,11 +713,17 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         },
       }));
 
-      // Clear discovery progress for this platform when done
-      setDiscoveryProgress(prev => prev ? {
-        ...prev,
-        [platform.toLowerCase()]: { ...prev[platform.toLowerCase() as keyof DiscoveryProgress], hasMore: false },
-      } as DiscoveryProgress : null);
+      // Mark platform as done in discovery progress
+      setDiscoveryProgress(prev => {
+        if (!prev) return prev;
+        const updated = { ...prev };
+        if (platform === 'POLYMARKET') {
+          updated.polymarket = { ...updated.polymarket, hasMore: false };
+        } else {
+          updated.kalshi = { ...updated.kalshi, hasMore: false };
+        }
+        return updated;
+      });
 
       return allMarkets;
     } catch (error) {
@@ -731,10 +750,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
-    // Reset discovery progress
+    // Reset discovery progress with start time
     setDiscoveryProgress({
       polymarket: { offset: 0, found: 0, hasMore: true },
       kalshi: { offset: 0, found: 0, hasMore: true },
+      status: 'running',
+      startedAt: new Date(),
+      completedAt: null,
     });
 
     try {
@@ -749,8 +771,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
       if (signal.aborted) return;
 
-      // Clear discovery progress when done
-      setDiscoveryProgress(null);
+      // Mark discovery as completed with timestamp
+      const completedAt = new Date();
+      setDiscoveryProgress(prev => prev ? {
+        ...prev,
+        status: 'completed',
+        completedAt,
+      } : null);
 
       // OPTIMIZATION: Now that we have all markets, run matching and THEN warm prices
       // This happens automatically via useArbitrage hook which sets matchedPolymarketIds
@@ -769,14 +796,32 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       }, 500); // Small delay to let matching complete
 
       if (polymarketMarkets.length > 0 || kalshiMarkets.length > 0) {
+        // Calculate duration
+        const startTime = discoveryProgress?.startedAt;
+        const durationSecs = startTime 
+          ? Math.round((completedAt.getTime() - startTime.getTime()) / 1000)
+          : 0;
+        const durationStr = durationSecs > 60 
+          ? `${Math.floor(durationSecs / 60)}m ${durationSecs % 60}s`
+          : `${durationSecs}s`;
+        
         toast({
           title: "Discovery complete",
-          description: `Found ${polymarketMarkets.length} Polymarket and ${kalshiMarkets.length} Kalshi markets`,
+          description: `Found ${(polymarketMarkets.length + kalshiMarkets.length).toLocaleString()} markets in ${durationStr}`,
         });
       }
+      
+      // Clear discovery progress after a delay to show completion state
+      setTimeout(() => {
+        setDiscoveryProgress(null);
+      }, 5000);
     } catch (error) {
       console.error('Discovery error:', error);
-      setDiscoveryProgress(null);
+      setDiscoveryProgress(prev => prev ? {
+        ...prev,
+        status: 'error',
+        completedAt: new Date(),
+      } : null);
     }
   }, [getApiKey, fetchPlatformMarkets, tier, warmMatchedPolymarketPrices]);
 
