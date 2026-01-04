@@ -108,6 +108,26 @@ export function ArbitrageSettingsPanel({
               </p>
             </div>
 
+            <div className="space-y-1.5">
+              <Label htmlFor="maxExpiration" className="text-sm text-foreground">
+                Max Expiration (days)
+              </Label>
+              <Input
+                id="maxExpiration"
+                type="number"
+                min={1}
+                max={365}
+                value={settings.maxExpirationDays}
+                onChange={(e) =>
+                  updateSettings({ maxExpirationDays: Math.max(1, parseInt(e.target.value) || defaults.maxExpirationDays) })
+                }
+                className="h-8"
+              />
+              <p className="text-xs text-muted-foreground">
+                Only show markets expiring within {defaults.maxExpirationDays} days
+              </p>
+            </div>
+
             <div className="flex items-center justify-between pt-2 border-t border-border">
               <div className="space-y-0.5">
                 <Label htmlFor="showStale" className="text-sm text-foreground">
