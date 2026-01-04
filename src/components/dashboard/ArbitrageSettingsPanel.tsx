@@ -145,6 +145,47 @@ export function ArbitrageSettingsPanel({
                 }
               />
             </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <div className="space-y-0.5">
+                <Label htmlFor="autoRefresh" className="text-sm text-foreground">
+                  Auto-Refresh Prices
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Automatically refresh matched prices
+                </p>
+              </div>
+              <Switch
+                id="autoRefresh"
+                checked={settings.autoRefreshEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ autoRefreshEnabled: checked })
+                }
+              />
+            </div>
+
+            {settings.autoRefreshEnabled && (
+              <div className="space-y-1.5">
+                <Label htmlFor="autoRefreshInterval" className="text-sm text-foreground">
+                  Auto-Refresh Interval (seconds)
+                </Label>
+                <Input
+                  id="autoRefreshInterval"
+                  type="number"
+                  min={30}
+                  max={300}
+                  step={10}
+                  value={settings.autoRefreshIntervalSeconds}
+                  onChange={(e) =>
+                    updateSettings({ autoRefreshIntervalSeconds: Math.max(30, parseInt(e.target.value) || defaults.autoRefreshIntervalSeconds) })
+                  }
+                  className="h-8"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Refresh prices every X seconds (min: 30s)
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </PopoverContent>
