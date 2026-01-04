@@ -12,7 +12,8 @@ import {
   TrendingUp,
   Search,
   Link2,
-  FileStack
+  FileStack,
+  CheckCircle2
 } from 'lucide-react';
 
 interface SummaryCardsProps {
@@ -38,9 +39,18 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
     : 0;
 
   const { discoveryProgress, liveRpm } = summary;
-  const isDiscovering = Boolean(
+  const isDiscovering = discoveryProgress?.status === 'running' && Boolean(
     discoveryProgress?.polymarket?.hasMore || discoveryProgress?.kalshi?.hasMore
   );
+  const isDiscoveryComplete = discoveryProgress?.status === 'completed';
+  
+  // Calculate duration if completed
+  const discoveryDuration = discoveryProgress?.startedAt && discoveryProgress?.completedAt
+    ? Math.round((discoveryProgress.completedAt.getTime() - discoveryProgress.startedAt.getTime()) / 1000)
+    : 0;
+  const durationStr = discoveryDuration > 60 
+    ? `${Math.floor(discoveryDuration / 60)}m ${discoveryDuration % 60}s`
+    : `${discoveryDuration}s`;
 
   return (
     <div className="space-y-3 sm:space-y-4">
@@ -71,6 +81,42 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
                     <CircleDot className="w-3 h-3 text-chart-2" />
                     Kalshi: {discoveryProgress?.kalshi?.found?.toLocaleString() ?? 0}
                     {discoveryProgress?.kalshi?.hasMore && <Loader2 className="w-3 h-3 animate-spin" />}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Discovery Complete */}
+      {isDiscoveryComplete && (
+        <Card className="border-chart-4/30 shadow-sm bg-chart-4/10">
+          <CardContent className="p-3 sm:p-4">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="p-1.5 sm:p-2 rounded-lg bg-chart-4/20">
+                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-chart-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs sm:text-sm font-medium text-chart-4">
+                    Discovery complete!
+                  </p>
+                  <p className="text-xs font-mono text-muted-foreground ml-2">
+                    {durationStr}
+                  </p>
+                </div>
+                <div className="flex gap-4 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <CircleDot className="w-3 h-3 text-chart-1" />
+                    Poly: {discoveryProgress?.polymarket?.found?.toLocaleString() ?? 0}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <CircleDot className="w-3 h-3 text-chart-2" />
+                    Kalshi: {discoveryProgress?.kalshi?.found?.toLocaleString() ?? 0}
+                  </span>
+                  <span className="flex items-center gap-1 text-chart-4">
+                    Total: {((discoveryProgress?.polymarket?.found ?? 0) + (discoveryProgress?.kalshi?.found ?? 0)).toLocaleString()}
                   </span>
                 </div>
               </div>

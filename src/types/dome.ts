@@ -169,9 +169,14 @@ export interface SyncState {
 }
 
 // Discovery Progress
+export type DiscoveryStatus = 'idle' | 'running' | 'completed' | 'error';
+
 export interface DiscoveryProgress {
   polymarket: { offset: number; found: number; hasMore: boolean };
   kalshi: { offset: number; found: number; hasMore: boolean };
+  status: DiscoveryStatus;
+  startedAt: Date | null;
+  completedAt: Date | null;
 }
 
 // Dashboard Summary
