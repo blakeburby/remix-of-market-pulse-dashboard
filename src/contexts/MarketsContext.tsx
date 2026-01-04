@@ -34,6 +34,7 @@ interface MarketsContextType {
   isRefreshingAllPrices: boolean;
   lastKalshiRefresh: Date | null;
   matchedPolymarketIds: Set<string>;
+  setMatchedKalshiTickers: (tickers: Set<string>) => void;
   setFilters: (filters: Partial<MarketFilters>) => void;
   startDiscovery: () => void;
   stopDiscovery: () => void;
@@ -82,6 +83,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [isRefreshingAllPrices, setIsRefreshingAllPrices] = useState(false);
   const [lastKalshiRefresh, setLastKalshiRefresh] = useState<Date | null>(null);
   const [matchedPolymarketIds, setMatchedPolymarketIds] = useState<Set<string>>(new Set());
+  const [matchedKalshiTickerCount, setMatchedKalshiTickerCount] = useState(0);
 
   const discoveryIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rpmIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -543,7 +545,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const priceWarmupChainRef = useRef<Promise<void>>(Promise.resolve());
 
   // OPTIMIZATION: Only warm prices for markets that have matches
-  const warmMatchedPolymarketPrices = async (
+  const warmMatchedPolymarketPrices = useCallback(async (
     discoveredMarkets: UnifiedMarket[],
     apiKey: string,
     signal?: AbortSignal
@@ -653,7 +655,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       await Promise.allSettled(promises);
       flush();
     }
-  };
+  }, [tier]);
 
   // Fetch markets from a single platform with pagination - continuously updates markets
   const fetchPlatformMarkets = async (
@@ -1290,29 +1292,38 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getApiKey, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, isRefreshingKalshi]);
 
+  const setMatchedKalshiTickers = useCallback((tickers: Set<string>) => {
+    const next = new Set(tickers);
+    matchedKalshiTickersRef.current = next;
+    setMatchedKalshiTickerCount(next.size);
+  }, []);
+
   // Force refresh ALL prices for matched markets (both Polymarket and Kalshi)
   const refreshAllMatchedPrices = useCallback(async () => {
     if (isRefreshingAllPrices) return;
-    
+
     const apiKey = getApiKey();
     if (!apiKey) return;
-    
+
+    const polyCount = matchedIdsRef.current.size;
+    const kalshiCount = matchedKalshiTickersRef.current.size;
+
     setIsRefreshingAllPrices(true);
-    console.log(`[Refresh All] Starting refresh for ${matchedPolymarketIds.size} matched markets`);
-    
+    console.log(`[Refresh All] Starting refresh (poly=${polyCount}, kalshi=${kalshiCount})`);
+
     try {
       // Refresh Polymarket prices
-      await warmMatchedPolymarketPrices(markets, apiKey);
+      await warmMatchedPolymarketPrices(marketsRef.current, apiKey);
       console.log('[Refresh All] Polymarket prices updated');
-      
+
       // Refresh Kalshi prices
       const kalshiUpdates = await fetchMatchedKalshiPrices(apiKey);
       applyKalshiPriceUpdates(kalshiUpdates);
       console.log(`[Refresh All] Kalshi prices updated (${kalshiUpdates.size} markets)`);
-      
+
       toast({
         title: "Prices refreshed",
-        description: `Updated prices for ${matchedPolymarketIds.size} Polymarket and ${kalshiUpdates.size} Kalshi markets`,
+        description: `Updated prices for ${polyCount} Polymarket and ${kalshiUpdates.size} Kalshi markets`,
       });
     } catch (error) {
       console.error('[Refresh All] Error:', error);
@@ -1324,26 +1335,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsRefreshingAllPrices(false);
     }
-  }, [getApiKey, matchedPolymarketIds.size, markets, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, isRefreshingAllPrices]);
+  }, [getApiKey, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, isRefreshingAllPrices]);
 
-  // Update matched Kalshi tickers whenever matches change
-  useEffect(() => {
-    // Extract Kalshi tickers from matched markets
-    const kalshiTickers = new Set<string>();
-    for (const market of markets) {
-      if (market.platform === 'KALSHI' && market.kalshiMarketTicker) {
-        // Check if this Kalshi market has a matching Polymarket
-        // We need to look at all Polymarket markets that are matched
-        const polyMarkets = markets.filter(m => m.platform === 'POLYMARKET' && matchedPolymarketIds.has(m.id));
-        // For now, include all Kalshi markets that have matches
-        // The actual matching is done in useArbitrage hook
-        if (matchedPolymarketIds.size > 0) {
-          kalshiTickers.add(market.kalshiMarketTicker);
-        }
-      }
-    }
-    matchedKalshiTickersRef.current = kalshiTickers;
-  }, [markets, matchedPolymarketIds]);
+  // Matched Kalshi tickers are provided by the matcher (useArbitrage) via setMatchedKalshiTickers.
+  // (The previous implementation accidentally treated all Kalshi markets as matched, which made refresh extremely slow.)
 
   // Coordinate warmup: trigger ONLY after matching completes
   useEffect(() => {
@@ -1351,7 +1346,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     // 1. Warmup is pending (discovery just finished)
     // 2. We have matched markets
     // 3. We're not already warming up
-    if (pendingWarmup && matchedPolymarketIds.size > 0 && !isWarmingUpRef.current) {
+    if (pendingWarmup && matchedPolymarketIds.size > 0 && matchedKalshiTickerCount > 0 && !isWarmingUpRef.current) {
       isWarmingUpRef.current = true;
       setPendingWarmup(false);
       
@@ -1387,7 +1382,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         }
       });
     }
-  }, [pendingWarmup, matchedPolymarketIds.size, getApiKey, markets, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, startKalshiPriceLoop]);
+  }, [pendingWarmup, matchedPolymarketIds.size, matchedKalshiTickerCount, getApiKey, markets, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, startKalshiPriceLoop]);
 
   // Live RPM counter - update every second, only when value changes
   useEffect(() => {
@@ -1438,6 +1433,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       isRefreshingAllPrices,
       lastKalshiRefresh,
       matchedPolymarketIds,
+      setMatchedKalshiTickers,
       setFilters,
       startDiscovery,
       stopDiscovery,
@@ -1498,6 +1494,7 @@ export function useMarkets(): MarketsContextType {
     isRefreshingAllPrices: false,
     lastKalshiRefresh: null,
     matchedPolymarketIds: new Set(),
+    setMatchedKalshiTickers: () => undefined,
     setFilters: () => undefined,
     startDiscovery: () => undefined,
     stopDiscovery: () => undefined,
