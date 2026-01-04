@@ -10,7 +10,7 @@ interface AuthState {
 }
 
 interface AuthContextType extends AuthState {
-  login: (apiKey: string) => Promise<boolean>;
+  login: (apiKey: string, options?: { remember?: boolean }) => Promise<boolean>;
   logout: () => void;
   setTier: (tier: DomeTier) => void;
   getApiKey: () => string | null;
@@ -18,8 +18,10 @@ interface AuthContextType extends AuthState {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Session storage key (not localStorage for better security)
+// Session storage key (default)
 const SESSION_KEY = 'dome_session';
+// Optional persistent storage (user opt-in)
+const REMEMBER_KEY = 'dome_session_persist';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
@@ -31,11 +33,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Check for existing session on mount
   useEffect(() => {
-    const session = sessionStorage.getItem(SESSION_KEY);
+    const fromSession = sessionStorage.getItem(SESSION_KEY);
+    const fromPersist = localStorage.getItem(REMEMBER_KEY);
+    const session = fromSession ?? fromPersist;
+
     if (session) {
       try {
         const parsed = JSON.parse(session);
         if (parsed.apiKey && parsed.tier) {
+          // Hydrate sessionStorage so the rest of the app reads consistently.
+          sessionStorage.setItem(SESSION_KEY, JSON.stringify(parsed));
+
           setState(prev => ({
             ...prev,
             isAuthenticated: true,
@@ -45,6 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         sessionStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(REMEMBER_KEY);
       }
     }
   }, []);
@@ -123,18 +132,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     throw lastError || new Error('Failed to connect after multiple attempts. Please try again.');
   };
 
-  const login = useCallback(async (apiKey: string): Promise<boolean> => {
+  const login = useCallback(async (apiKey: string, options?: { remember?: boolean }): Promise<boolean> => {
     setState(prev => ({ ...prev, isValidating: true, error: null }));
 
     try {
       await validateApiKey(apiKey);
 
-      // Store in session (not localStorage)
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      const payload = {
         apiKey,
         tier: state.tier,
         timestamp: Date.now(),
-      }));
+      };
+
+      // Store in session (default)
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+
+      // Optional persistent storage (user opt-in)
+      if (options?.remember) {
+        localStorage.setItem(REMEMBER_KEY, JSON.stringify(payload));
+      } else {
+        localStorage.removeItem(REMEMBER_KEY);
+      }
 
       setState(prev => ({
         ...prev,
@@ -158,6 +176,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(REMEMBER_KEY);
     setState({
       isAuthenticated: false,
       isValidating: false,
@@ -182,10 +201,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Ignore
       }
     }
+
+    // Update persistent session if enabled
+    const persisted = localStorage.getItem(REMEMBER_KEY);
+    if (persisted) {
+      try {
+        const parsed = JSON.parse(persisted);
+        parsed.tier = tier;
+        localStorage.setItem(REMEMBER_KEY, JSON.stringify(parsed));
+      } catch {
+        // Ignore
+      }
+    }
   }, []);
 
   const getApiKey = useCallback((): string | null => {
-    const session = sessionStorage.getItem(SESSION_KEY);
+    const fromSession = sessionStorage.getItem(SESSION_KEY);
+    const fromPersist = localStorage.getItem(REMEMBER_KEY);
+    const session = fromSession ?? fromPersist;
+
     if (session) {
       try {
         const parsed = JSON.parse(session);
