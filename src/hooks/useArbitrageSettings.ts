@@ -6,7 +6,6 @@ export interface ArbitrageSettings {
   minProfitPercent: number;     // Minimum profit % to show opportunity
   kalshiRefreshIntervalSeconds: number; // How often to refresh Kalshi prices
   showStaleOpportunities: boolean; // Show stale opportunities with warning
-  maxExpirationDays: number;    // Only show markets expiring within this many days
 }
 
 const DEFAULT_SETTINGS: ArbitrageSettings = {
@@ -15,7 +14,6 @@ const DEFAULT_SETTINGS: ArbitrageSettings = {
   minProfitPercent: 0.5,        // 0.5% minimum profit
   kalshiRefreshIntervalSeconds: 30, // Refresh Kalshi every 30s
   showStaleOpportunities: false, // Hide stale by default
-  maxExpirationDays: 30,        // Only show markets expiring within 30 days
 };
 
 const STORAGE_KEY = 'arbitrage-settings';

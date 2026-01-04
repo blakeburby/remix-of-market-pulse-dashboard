@@ -99,17 +99,11 @@ function filterFreshOpportunities(
 }
 
 /**
- * Filter out expired opportunities and those too far in the future
+ * Filter out expired opportunities
  */
-function filterByExpiration(
-  opportunities: ArbitrageOpportunity[],
-  maxExpirationDays: number
-): ArbitrageOpportunity[] {
+function filterExpired(opportunities: ArbitrageOpportunity[]): ArbitrageOpportunity[] {
   const now = new Date();
-  const maxDate = new Date(now.getTime() + maxExpirationDays * 24 * 60 * 60 * 1000);
-  return opportunities.filter(opp => 
-    opp.expirationDate > now && opp.expirationDate <= maxDate
-  );
+  return opportunities.filter(opp => opp.expirationDate > now);
 }
 
 /**
@@ -159,8 +153,8 @@ export function useArbitrage(): UseArbitrageResult {
     // Find all arbitrage opportunities (unfiltered)
     const allOpportunities = findArbitrageOpportunities(matches);
     
-    // Filter by expiration (must be in future but within max days)
-    const opportunities = filterByExpiration(allOpportunities, settings.maxExpirationDays);
+    // Filter out expired opportunities
+    const opportunities = filterExpired(allOpportunities);
     
     // Filter to only fresh opportunities
     const freshByTime = filterFreshOpportunities(
