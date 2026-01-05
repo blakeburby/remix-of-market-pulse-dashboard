@@ -1,9 +1,10 @@
-import { forwardRef, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { MatchedMarket, useSportsArbitrageV2, SportType } from '@/hooks/useSportsArbitrageV2';
+import { useSportsArbitrageV2, SportType } from '@/hooks/useSportsArbitrageV2';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TradePlanCard } from '@/components/sports-v2/TradePlanCard';
+import { MarketCard } from '@/components/sports-v2/MarketCard';
 import { FiltersPanel } from '@/components/sports-v2/FiltersPanel';
 import { DiagnosticsPanel } from '@/components/sports-v2/DiagnosticsPanel';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,16 +16,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import {
   AlertCircle,
   CalendarIcon,
   Filter,
   Info,
+  LayoutGrid,
+  List,
   RefreshCw,
   Search,
   Shield,
   Trophy,
+  TrendingUp,
   Zap,
   ZapOff,
 } from 'lucide-react';
@@ -60,38 +65,6 @@ function ensureCanonical(url: string) {
   tag.href = url;
 }
 
-function formatCents(price: number | null): string {
-  if (price === null || !Number.isFinite(price)) return '—';
-  return `${Math.round(price * 100)}¢`;
-}
-
-function formatImplied(price: number | null): string {
-  if (price === null || !Number.isFinite(price)) return '—';
-  return `${(price * 100).toFixed(1)}%`;
-}
-
-function formatDecimalOdds(price: number | null): string {
-  if (price === null || !Number.isFinite(price) || price <= 0) return '—';
-  return (1 / price).toFixed(2);
-}
-
-const MarketTitle = forwardRef<HTMLSpanElement, { market: MatchedMarket }>(({ market }, ref) => {
-  const title = market.title;
-  if (title) return (
-    <span ref={ref} className="truncate">
-      {title}
-    </span>
-  );
-
-  const raw = market.kalshi.event_ticker.replace(/^KX[A-Z]+GAME-/, '').replace(/-/g, ' ');
-  return (
-    <span ref={ref} className="truncate">
-      {raw}
-    </span>
-  );
-});
-MarketTitle.displayName = 'MarketTitle';
-
 export default function SportsArbitrageV2Page() {
   const { isAuthenticated, isReady, logout } = useAuth();
   const navigate = useNavigate();
@@ -119,6 +92,7 @@ export default function SportsArbitrageV2Page() {
   } = useSportsArbitrageV2();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'compact'>('grid');
 
   useEffect(() => {
     document.title = 'Locked Sports Arbitrage Scanner V2 | Burby Capital';
@@ -345,72 +319,41 @@ export default function SportsArbitrageV2Page() {
           </section>
         )}
 
-        {/* Matched Markets (always) */}
+        {/* Matched Markets */}
         {filteredMarkets.length > 0 && (
           <section className="space-y-4" aria-label="Matched markets list">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <Trophy className="w-5 h-5" />
-              Matched Markets ({filteredMarkets.filter((m) => m.polymarket).length} of {filteredMarkets.length})
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Trophy className="w-5 h-5" />
+                Matched Markets ({filteredMarkets.filter((m) => m.polymarket).length} of {filteredMarkets.length})
+              </h2>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  onClick={() => setViewMode('grid')}
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant={viewMode === 'compact' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  onClick={() => setViewMode('compact')}
+                >
+                  <List className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredMarkets.map((market) => {
-                const aLabel = market.outcomeA ?? 'Outcome A';
-                const bLabel = market.outcomeB ?? 'Outcome B';
-
-                const kYes = market.kalshiPrice?.yesAsk ?? null;
-                const kNo = market.kalshiPrice?.noAsk ?? null;
-                const pYes = market.polymarketPrice?.yesAsk ?? null;
-                const pNo = market.polymarketPrice?.noAsk ?? null;
-
-                const expiryText = market.expiresAt ? format(new Date(market.expiresAt), 'MMM d, yyyy HH:mm') : null;
-
-                return (
-                  <Card
-                    key={market.kalshi.event_ticker}
-                    className={cn('transition-colors', market.polymarket ? 'border-chart-2/30' : 'border-muted')}
-                  >
-                    <CardContent className="p-4 space-y-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="font-medium text-sm truncate flex-1">
-                          <MarketTitle market={market} />
-                        </p>
-                        <Badge variant={market.polymarket ? 'default' : 'secondary'} className="shrink-0 text-xs">
-                          {market.polymarket ? 'Matched' : 'Kalshi Only'}
-                        </Badge>
-                      </div>
-
-                      {expiryText && (
-                        <p className="text-xs text-muted-foreground">Expires: {expiryText} UTC</p>
-                      )}
-
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="p-2 rounded bg-muted/50 space-y-1">
-                          <p className="text-muted-foreground">Kalshi</p>
-                          <p className="font-medium truncate">{aLabel}: {formatCents(kYes)} ({formatImplied(kYes)})</p>
-                          <p className="font-medium truncate">{bLabel}: {formatCents(kNo)} ({formatImplied(kNo)})</p>
-                          <p className="text-[10px] text-muted-foreground">Dec odds: {formatDecimalOdds(kYes)} / {formatDecimalOdds(kNo)}</p>
-                        </div>
-                        <div className="p-2 rounded bg-muted/50 space-y-1">
-                          <p className="text-muted-foreground">Polymarket</p>
-                          <p className="font-medium truncate">{aLabel}: {formatCents(pYes)} ({formatImplied(pYes)})</p>
-                          <p className="font-medium truncate">{bLabel}: {formatCents(pNo)} ({formatImplied(pNo)})</p>
-                          <p className="text-[10px] text-muted-foreground">Dec odds: {formatDecimalOdds(pYes)} / {formatDecimalOdds(pNo)}</p>
-                        </div>
-                      </div>
-
-                      {(market.kalshiError || market.polymarketError) && (
-                        <div className="space-y-1">
-                          {market.kalshiError && <p className="text-xs text-destructive">Kalshi: {market.kalshiError}</p>}
-                          {market.polymarketError && <p className="text-xs text-destructive">Polymarket: {market.polymarketError}</p>}
-                        </div>
-                      )}
-
-                      {!market.pricesFetched && market.polymarket && <Skeleton className="h-10" />}
-                    </CardContent>
-                  </Card>
-                );
-              })}
+            <div className={cn(
+              "grid gap-3",
+              viewMode === 'grid' ? 'sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'
+            )}>
+              {filteredMarkets.map((market) => (
+                <MarketCard key={market.kalshi.event_ticker} market={market} />
+              ))}
             </div>
           </section>
         )}
