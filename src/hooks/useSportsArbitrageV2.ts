@@ -32,11 +32,17 @@ export interface MatchedMarket {
     yesBid: number | null;
     noBid: number | null;
     depth: number | null; // dollars
+    source: 'orderbook' | 'market_bid_ask' | 'market_last_price' | 'none';
+    spread: number | null; // bid-ask spread in cents
   } | null;
   polymarketPrice: {
     yesAsk: number | null;
     noAsk: number | null;
+    yesBid: number | null;
+    noBid: number | null;
     depth: number | null; // dollars
+    source: 'market-price' | 'orderbook' | 'none';
+    spread: number | null; // bid-ask spread
   } | null;
 
   kalshiUpdatedAt: number | null; // ms
@@ -692,10 +698,14 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     [fetchKalshiOrderbookQuote, fetchKalshiMarketFallback, fetchKalshiMarketInfo]
   );
 
-  // Fetch Polymarket prices with orderbook fallback
+  // Fetch Polymarket prices with orderbook fallback - improved to get bid/ask spread
   const fetchPolymarketPrices = useCallback(
     async (tokenIds: string[], apiKey: string) => {
-      if (tokenIds.length < 2) return { yesAsk: null, noAsk: null, depth: null, updatedAt: null, error: 'Less than 2 token IDs' };
+      if (tokenIds.length < 2) return { 
+        yesAsk: null, noAsk: null, yesBid: null, noBid: null, 
+        depth: null, updatedAt: null, error: 'Less than 2 token IDs',
+        source: 'none' as const, spread: null
+      };
 
       const urlA = `https://api.domeapi.io/v1/polymarket/market-price/${tokenIds[0]}`;
       const urlB = `https://api.domeapi.io/v1/polymarket/market-price/${tokenIds[1]}`;
@@ -709,9 +719,15 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       let bPrice: number | null = resB.resp?.ok ? resB.json?.price ?? null : null;
       let updatedAt = msFromSeconds(resA.json?.at_time) ?? msFromSeconds(resB.json?.at_time) ?? Date.now();
       let errorMsg: string | null = null;
+      let source: 'market-price' | 'orderbook' | 'none' = 'market-price';
+      
+      // Try to get bids from orderbook for spread calculation
+      let aBid: number | null = null;
+      let bBid: number | null = null;
 
       // Fallback to orderbook if market-price fails
       if (aPrice === null || bPrice === null) {
+        source = 'orderbook';
         const nowMs = toMs(Date.now());
         const startMs = toMs(nowMs - 60 * 60 * 1000);
 
@@ -733,42 +749,62 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         const [obResA, obResB] = await Promise.all(orderbookPromises);
 
         // Parse orderbook for A
-        if (aPrice === null && obResA?.resp?.ok && obResA.json) {
+        if (obResA?.resp?.ok && obResA.json) {
           const snapshots = Array.isArray(obResA.json?.snapshots) ? obResA.json.snapshots : [];
           if (snapshots.length > 0) {
             const latest = snapshots[snapshots.length - 1];
             const asks = Array.isArray(latest?.orderbook?.asks) ? latest.orderbook.asks : [];
-            if (asks.length > 0) {
+            const bids = Array.isArray(latest?.orderbook?.bids) ? latest.orderbook.bids : [];
+            if (asks.length > 0 && aPrice === null) {
               aPrice = Math.min(...asks.map((a: any) => a.price ?? a[0] ?? Infinity));
               if (!Number.isFinite(aPrice)) aPrice = null;
+            }
+            if (bids.length > 0) {
+              aBid = Math.max(...bids.map((b: any) => b.price ?? b[0] ?? 0));
+              if (!Number.isFinite(aBid) || aBid <= 0) aBid = null;
             }
           }
         }
 
         // Parse orderbook for B
-        if (bPrice === null && obResB?.resp?.ok && obResB.json) {
+        if (obResB?.resp?.ok && obResB.json) {
           const snapshots = Array.isArray(obResB.json?.snapshots) ? obResB.json.snapshots : [];
           if (snapshots.length > 0) {
             const latest = snapshots[snapshots.length - 1];
             const asks = Array.isArray(latest?.orderbook?.asks) ? latest.orderbook.asks : [];
-            if (asks.length > 0) {
+            const bids = Array.isArray(latest?.orderbook?.bids) ? latest.orderbook.bids : [];
+            if (asks.length > 0 && bPrice === null) {
               bPrice = Math.min(...asks.map((a: any) => a.price ?? a[0] ?? Infinity));
               if (!Number.isFinite(bPrice)) bPrice = null;
+            }
+            if (bids.length > 0) {
+              bBid = Math.max(...bids.map((b: any) => b.price ?? b[0] ?? 0));
+              if (!Number.isFinite(bBid) || bBid <= 0) bBid = null;
             }
           }
         }
 
         if (aPrice === null || bPrice === null) {
           errorMsg = `Token ${aPrice === null ? tokenIds[0] : tokenIds[1]}: No market-price or orderbook`;
+          source = 'none';
         }
       }
+
+      // Calculate spread if we have both bid and ask
+      const spread = (aPrice !== null && aBid !== null) 
+        ? Math.round((aPrice - aBid) * 100) // in cents
+        : null;
 
       return {
         yesAsk: aPrice,
         noAsk: bPrice,
+        yesBid: aBid,
+        noBid: bBid,
         depth: 1000, // default estimate
         updatedAt,
         error: errorMsg,
+        source,
+        spread,
       };
     },
     [fetchWithDiagnostics]
@@ -898,6 +934,11 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
             const aBid = kA.yesBid;
             const bBid = kB.yesBid ?? kA.noBid;
 
+            // Compute spread for Kalshi
+            const kalshiSpread = (aAsk !== null && aBid !== null) 
+              ? Math.round((aAsk - aBid) * 100) // cents
+              : null;
+
             const kalshiPrice = {
               yesAsk: aAsk,
               noAsk: bAsk,
@@ -907,12 +948,18 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
                 typeof kA.depth === 'number' && typeof kB.depth === 'number'
                   ? Math.min(kA.depth, kB.depth)
                   : (kA.depth ?? kB.depth ?? null),
+              source: kA.source,
+              spread: kalshiSpread,
             };
 
             const polymarketPrice = {
               yesAsk: polyRes.yesAsk,
               noAsk: polyRes.noAsk,
+              yesBid: polyRes.yesBid ?? null,
+              noBid: polyRes.noBid ?? null,
               depth: polyRes.depth,
+              source: polyRes.source,
+              spread: polyRes.spread ?? null,
             };
 
             const kalshiReasonForYesAsk = () => {
