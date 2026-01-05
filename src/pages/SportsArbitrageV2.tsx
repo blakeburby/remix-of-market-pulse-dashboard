@@ -115,6 +115,7 @@ export default function SportsArbitrageV2Page() {
     setSearchQuery,
     diagnostics,
     clearDiagnostics,
+    rateLimiterStats,
   } = useSportsArbitrageV2();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -164,6 +165,17 @@ export default function SportsArbitrageV2Page() {
 
           {/* Status Badges */}
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Rate limiter status */}
+            {rateLimiterStats.isRateLimited && (
+              <Badge variant="destructive" className="gap-1.5">
+                <AlertCircle className="w-3 h-3" />
+                Throttled
+              </Badge>
+            )}
+            {/* RPM counter */}
+            <Badge variant="secondary" className="gap-1.5 text-xs">
+              {rateLimiterStats.requestsPerMinute} RPM
+            </Badge>
             {/* Auto-refresh indicator */}
             {settings.autoRefreshEnabled && (
               <Badge variant="outline" className="gap-1.5 border-primary text-primary animate-pulse">
@@ -297,7 +309,7 @@ export default function SportsArbitrageV2Page() {
         </section>
 
         {/* API Diagnostics Panel */}
-        <DiagnosticsPanel diagnostics={diagnostics} onClear={clearDiagnostics} />
+        <DiagnosticsPanel diagnostics={diagnostics} onClear={clearDiagnostics} rateLimiterStats={rateLimiterStats} />
 
         {/* Error */}
         {error && (

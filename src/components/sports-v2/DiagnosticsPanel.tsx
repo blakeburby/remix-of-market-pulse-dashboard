@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { DiagnosticEntry } from '@/hooks/useSportsArbitrageV2';
+import { RateLimiterStats } from '@/lib/rate-limiter';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
-import { Activity, ChevronDown, ChevronUp, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Activity, ChevronDown, ChevronUp, Trash2, AlertCircle, CheckCircle2, Gauge, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 
 // Build stamp for cache debugging
@@ -15,16 +17,22 @@ const BUILD_STAMP = new Date().toISOString().slice(0, 19).replace('T', ' ');
 interface DiagnosticsPanelProps {
   diagnostics: DiagnosticEntry[];
   onClear: () => void;
+  rateLimiterStats?: RateLimiterStats;
 }
 
-export function DiagnosticsPanel({ diagnostics, onClear }: DiagnosticsPanelProps) {
+export function DiagnosticsPanel({ diagnostics, onClear, rateLimiterStats }: DiagnosticsPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const successCount = diagnostics.filter((d) => d.ok).length;
   const errorCount = diagnostics.filter((d) => !d.ok).length;
+  const rateLimitedCount = diagnostics.filter((d) => d.status === 429).length;
 
   const matchingMarketsCalls = diagnostics.filter((d) => d.type === 'matching-markets');
   const lastMatchingMarkets = matchingMarketsCalls[0] ?? null;
+
+  const tokenUsagePercent = rateLimiterStats
+    ? ((rateLimiterStats.requestsIn10s / rateLimiterStats.maxPer10s) * 100)
+    : 0;
 
   return (
     <Card className="border-muted">
@@ -48,6 +56,16 @@ export function DiagnosticsPanel({ diagnostics, onClear }: DiagnosticsPanelProps
                     {errorCount} errors
                   </Badge>
                 )}
+                {rateLimitedCount > 0 && (
+                  <Badge variant="outline" className="text-xs text-warning border-warning">
+                    {rateLimitedCount} throttled
+                  </Badge>
+                )}
+                {rateLimiterStats && (
+                  <Badge variant="outline" className="text-xs">
+                    {rateLimiterStats.requestsPerMinute} RPM
+                  </Badge>
+                )}
                 <Badge variant="outline" className="text-[10px] text-muted-foreground">
                   Build: {BUILD_STAMP}
                 </Badge>
@@ -69,6 +87,35 @@ export function DiagnosticsPanel({ diagnostics, onClear }: DiagnosticsPanelProps
         </CollapsibleTrigger>
         <CollapsibleContent>
           <CardContent className="pt-0 pb-3 space-y-3">
+            {/* Rate Limiter Stats */}
+            {rateLimiterStats && (
+              <div className="p-3 rounded-lg bg-muted/50 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium flex items-center gap-1.5">
+                    <Gauge className="w-3.5 h-3.5" />
+                    Rate Limiter ({rateLimiterStats.tier.toUpperCase()})
+                  </span>
+                  {rateLimiterStats.isRateLimited && (
+                    <Badge variant="destructive" className="text-[10px] gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      Throttled
+                    </Badge>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Tokens used (10s window)</span>
+                    <span>{rateLimiterStats.requestsIn10s} / {rateLimiterStats.maxPer10s}</span>
+                  </div>
+                  <Progress value={tokenUsagePercent} className="h-1.5" />
+                </div>
+                <div className="flex items-center gap-4 text-muted-foreground">
+                  <span>RPM: {rateLimiterStats.requestsPerMinute}</span>
+                  <span>Available: {rateLimiterStats.availableTokens}</span>
+                </div>
+              </div>
+            )}
+
             {/* Summary */}
             {lastMatchingMarkets && (
               <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-xs">
