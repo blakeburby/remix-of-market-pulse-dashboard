@@ -92,7 +92,7 @@ const MarketTitle = forwardRef<HTMLSpanElement, { market: MatchedMarket }>(({ ma
 MarketTitle.displayName = 'MarketTitle';
 
 export default function SportsArbitrageV2Page() {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, isReady, logout } = useAuth();
   const navigate = useNavigate();
 
   const {
@@ -123,8 +123,8 @@ export default function SportsArbitrageV2Page() {
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated) navigate('/');
-  }, [isAuthenticated, navigate]);
+    if (isReady && !isAuthenticated) navigate('/');
+  }, [isReady, isAuthenticated, navigate]);
 
   const filteredMarkets = useMemo(() => {
     if (!searchQuery.trim()) return markets;
@@ -132,6 +132,7 @@ export default function SportsArbitrageV2Page() {
     return markets.filter((m) => (m.title ?? m.kalshi.event_ticker).toLowerCase().includes(q));
   }, [markets, searchQuery]);
 
+  if (!isReady) return null;
   if (!isAuthenticated) return null;
 
   const matchedCount = markets.filter((m) => m.polymarket).length;
@@ -293,6 +294,30 @@ export default function SportsArbitrageV2Page() {
               <p className="text-sm text-destructive">{error}</p>
             </CardContent>
           </Card>
+        )}
+
+        {/* Loading */}
+        {(isLoading || isFetchingPrices) && markets.length === 0 && !error && (
+          <section className="space-y-3" aria-label="Sports V2 loading state">
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-6 w-56" />
+              <Skeleton className="h-6 w-24" />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Card key={i}>
+                  <CardContent className="p-4 space-y-3">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Skeleton className="h-16 w-full" />
+                      <Skeleton className="h-16 w-full" />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </section>
         )}
 
         {/* Matched Markets (always) */}

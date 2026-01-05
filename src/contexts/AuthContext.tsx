@@ -5,6 +5,8 @@ import { globalRateLimiter } from '@/lib/rate-limiter';
 interface AuthState {
   isAuthenticated: boolean;
   isValidating: boolean;
+  /** True once we have checked storage for an existing session */
+  isReady: boolean;
   error: string | null;
   tier: DomeTier;
 }
@@ -27,6 +29,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
     isAuthenticated: false,
     isValidating: false,
+    isReady: false,
     error: null,
     tier: 'free',
   });
@@ -44,18 +47,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Hydrate sessionStorage so the rest of the app reads consistently.
           sessionStorage.setItem(SESSION_KEY, JSON.stringify(parsed));
 
-          setState(prev => ({
+          setState((prev) => ({
             ...prev,
             isAuthenticated: true,
             tier: parsed.tier,
+            isReady: true,
           }));
           globalRateLimiter.setTier(parsed.tier);
+          return;
         }
       } catch {
-        sessionStorage.removeItem(SESSION_KEY);
-        localStorage.removeItem(REMEMBER_KEY);
+        // fallthrough
       }
+
+      // Invalid session payload
+      sessionStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem(REMEMBER_KEY);
     }
+
+    // No session found
+    setState((prev) => ({
+      ...prev,
+      isAuthenticated: false,
+      isReady: true,
+    }));
+    globalRateLimiter.setTier('free');
   }, []);
 
   const validateApiKey = async (apiKey: string, retries = 3): Promise<boolean> => {
@@ -154,20 +170,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem(REMEMBER_KEY);
       }
 
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isAuthenticated: true,
         isValidating: false,
+        isReady: true,
         error: null,
       }));
 
       return true;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Login failed';
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isAuthenticated: false,
         isValidating: false,
+        isReady: true,
         error: errorMessage,
       }));
       return false;
@@ -180,6 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState({
       isAuthenticated: false,
       isValidating: false,
+      isReady: true,
       error: null,
       tier: 'free',
     });
@@ -247,6 +266,7 @@ export function useAuth(): AuthContextType {
     return {
       isAuthenticated: false,
       isValidating: false,
+      isReady: true,
       error: 'Authentication provider not available',
       tier: 'free',
       login: async () => false,
