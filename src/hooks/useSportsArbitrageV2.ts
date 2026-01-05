@@ -315,9 +315,9 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       } | null
     ) => {
       const safeTicker = encodeURIComponent(marketTicker);
-      const nowSec = Math.floor(Date.now() / 1000);
-      const startSec = nowSec - 60 * 60; // last hour
-      const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startSec}&end_time=${nowSec}&limit=1`;
+      const nowMs = Date.now();
+      const startMs = nowMs - 60 * 60 * 1000; // last hour
+      const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startMs}&end_time=${nowMs}&limit=1`;
 
       const { resp, json, responseSnippet } = await fetchWithDiagnostics(url, 'kalshi-price', apiKey, marketTicker);
 
@@ -444,19 +444,19 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
 
       // Fallback to orderbook if market-price fails
       if (aPrice === null || bPrice === null) {
-        const nowSec = Math.floor(Date.now() / 1000);
-        const startSec = nowSec - 60 * 60;
+        const nowMs = Date.now();
+        const startMs = nowMs - 60 * 60 * 1000;
 
         const orderbookPromises = [];
         if (aPrice === null) {
-          const obUrlA = `https://api.domeapi.io/v1/polymarket/orderbooks?token_id=${tokenIds[0]}&start_time=${startSec}&end_time=${nowSec}&limit=1`;
+          const obUrlA = `https://api.domeapi.io/v1/polymarket/orderbooks?token_id=${tokenIds[0]}&start_time=${startMs}&end_time=${nowMs}&limit=1`;
           orderbookPromises.push(fetchWithDiagnostics(obUrlA, 'polymarket-orderbook', apiKey, tokenIds[0]));
         } else {
           orderbookPromises.push(Promise.resolve(null));
         }
 
         if (bPrice === null) {
-          const obUrlB = `https://api.domeapi.io/v1/polymarket/orderbooks?token_id=${tokenIds[1]}&start_time=${startSec}&end_time=${nowSec}&limit=1`;
+          const obUrlB = `https://api.domeapi.io/v1/polymarket/orderbooks?token_id=${tokenIds[1]}&start_time=${startMs}&end_time=${nowMs}&limit=1`;
           orderbookPromises.push(fetchWithDiagnostics(obUrlB, 'polymarket-orderbook', apiKey, tokenIds[1]));
         } else {
           orderbookPromises.push(Promise.resolve(null));
