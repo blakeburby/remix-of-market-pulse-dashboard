@@ -84,8 +84,9 @@ function getSourceColor(source: string) {
   }
 }
 
-function getLiquidityBadge(depth: number | null) {
-  if (depth === null || depth <= 0) return { label: 'No Liq', variant: 'destructive' as const };
+function getLiquidityBadge(depth: number | null, source?: string) {
+  if (source === 'none') return { label: 'No Data', variant: 'destructive' as const };
+  if (depth === null || depth <= 0) return { label: 'No Liq', variant: 'secondary' as const };
   if (depth < 100) return { label: 'Low', variant: 'secondary' as const };
   if (depth < 500) return { label: 'Med', variant: 'outline' as const };
   return { label: 'High', variant: 'default' as const };
@@ -102,8 +103,8 @@ export function MarketCard({ market }: MarketCardProps) {
 
   const expiryText = market.expiresAt ? format(new Date(market.expiresAt), 'MMM d, HH:mm') : null;
 
-  const kalshiLiquidity = getLiquidityBadge(market.kalshiPrice?.depth ?? null);
-  const polyLiquidity = getLiquidityBadge(market.polymarketPrice?.depth ?? null);
+  const kalshiLiquidity = getLiquidityBadge(market.kalshiPrice?.depth ?? null, market.kalshiPrice?.source);
+  const polyLiquidity = getLiquidityBadge(market.polymarketPrice?.depth ?? null, market.polymarketPrice?.source);
 
   // Calculate price difference (potential edge indicator)
   const priceDiffA = kYes !== null && pYes !== null ? Math.abs(kYes - pYes) * 100 : null;
@@ -176,14 +177,22 @@ export function MarketCard({ market }: MarketCardProps) {
               </div>
               
               <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground truncate max-w-[60px]">{aLabel}</span>
-                  <span className="font-semibold">{formatCents(kYes)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground truncate max-w-[60px]">{bLabel}</span>
-                  <span className="font-semibold">{formatCents(kNo)}</span>
-                </div>
+                {market.kalshiPrice?.source === 'none' ? (
+                  <div className="text-center py-2 text-muted-foreground text-[10px]">
+                    No liquidity yet
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground truncate max-w-[60px]">{aLabel}</span>
+                      <span className="font-semibold">{formatCents(kYes)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground truncate max-w-[60px]">{bLabel}</span>
+                      <span className="font-semibold">{formatCents(kNo)}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="pt-1 border-t border-border/30 flex items-center justify-between text-[10px] text-muted-foreground">
@@ -240,14 +249,26 @@ export function MarketCard({ market }: MarketCardProps) {
               </div>
               
               <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground truncate max-w-[60px]">{aLabel}</span>
-                  <span className="font-semibold">{formatCents(pYes)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground truncate max-w-[60px]">{bLabel}</span>
-                  <span className="font-semibold">{formatCents(pNo)}</span>
-                </div>
+                {!market.polymarket ? (
+                  <div className="text-center py-2 text-muted-foreground text-[10px]">
+                    Not matched
+                  </div>
+                ) : market.polymarketPrice?.source === 'none' ? (
+                  <div className="text-center py-2 text-muted-foreground text-[10px]">
+                    No liquidity yet
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground truncate max-w-[60px]">{aLabel}</span>
+                      <span className="font-semibold">{formatCents(pYes)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground truncate max-w-[60px]">{bLabel}</span>
+                      <span className="font-semibold">{formatCents(pNo)}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="pt-1 border-t border-border/30 flex items-center justify-between text-[10px] text-muted-foreground">
