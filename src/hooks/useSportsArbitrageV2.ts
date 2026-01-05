@@ -195,13 +195,13 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   const fetchKalshiOutcome = useCallback(async (marketTicker: string, apiKey: string) => {
     const safeTicker = encodeURIComponent(marketTicker);
 
-    // Orderbooks endpoint expects epoch seconds (NOT ms)
+    // Orderbooks endpoint expects epoch milliseconds
     try {
-      const nowSec = Math.floor(Date.now() / 1000);
-      const startSec = nowSec - 60 * 60; // last hour
+      const nowMs = Date.now();
+      const startMs = nowMs - 60 * 60 * 1000; // last hour
 
       const resp = await fetch(
-        `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startSec}&end_time=${nowSec}&limit=1`,
+        `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startMs}&end_time=${nowMs}&limit=1`,
         {
           headers: {
             Authorization: `Bearer ${apiKey}`,

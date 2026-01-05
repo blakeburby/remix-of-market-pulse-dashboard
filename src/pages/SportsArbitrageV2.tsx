@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { MatchedMarket, useSportsArbitrageV2, SportType } from '@/hooks/useSportsArbitrageV2';
@@ -74,13 +74,22 @@ function formatDecimalOdds(price: number | null): string {
   return (1 / price).toFixed(2);
 }
 
-function MarketTitle({ market }: { market: MatchedMarket }) {
+const MarketTitle = forwardRef<HTMLSpanElement, { market: MatchedMarket }>(({ market }, ref) => {
   const title = market.title;
-  if (title) return <span className="truncate">{title}</span>;
+  if (title) return (
+    <span ref={ref} className="truncate">
+      {title}
+    </span>
+  );
 
   const raw = market.kalshi.event_ticker.replace(/^KX[A-Z]+GAME-/, '').replace(/-/g, ' ');
-  return <span className="truncate">{raw}</span>;
-}
+  return (
+    <span ref={ref} className="truncate">
+      {raw}
+    </span>
+  );
+});
+MarketTitle.displayName = 'MarketTitle';
 
 export default function SportsArbitrageV2Page() {
   const { isAuthenticated, logout } = useAuth();
@@ -126,7 +135,13 @@ export default function SportsArbitrageV2Page() {
   if (!isAuthenticated) return null;
 
   const matchedCount = markets.filter((m) => m.polymarket).length;
-  const pricedCount = markets.filter((m) => m.kalshiPrice && m.polymarketPrice).length;
+  const pricedCount = markets.filter((m) => {
+    const kYes = m.kalshiPrice?.yesAsk ?? null;
+    const kNo = m.kalshiPrice?.noAsk ?? null;
+    const pYes = m.polymarketPrice?.yesAsk ?? null;
+    const pNo = m.polymarketPrice?.noAsk ?? null;
+    return [kYes, kNo, pYes, pNo].every((v) => typeof v === 'number' && Number.isFinite(v));
+  }).length;
 
   return (
     <div className="min-h-screen bg-background">
