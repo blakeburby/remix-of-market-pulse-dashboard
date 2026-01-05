@@ -3,12 +3,23 @@
 
 import { DomeTier, TIER_LIMITS } from '@/types/dome';
 
+export interface RateLimiterStats {
+  tier: DomeTier;
+  requestsPerMinute: number;
+  requestsIn10s: number;
+  availableTokens: number;
+  maxPer10s: number;
+  isRateLimited: boolean;
+  rateLimitedUntil: number | null;
+}
+
 export class RateLimiter {
   private tier: DomeTier;
   private requestTimestamps: number[] = [];  // Timestamps within 10s sliding window (for rate limiting)
   private requestTimestamps60s: number[] = [];  // Timestamps within 60s window (for accurate RPM)
   private lastRequestTime: number = 0;
   private rateLimitedUntil: number = 0;  // Pause until this timestamp if 429 received
+  private listeners: Set<() => void> = new Set();
 
   constructor(tier: DomeTier = 'free') {
     this.tier = tier;
@@ -17,6 +28,7 @@ export class RateLimiter {
 
   setTier(tier: DomeTier) {
     this.tier = tier;
+    this.notifyListeners();
   }
 
   getTier(): DomeTier {
@@ -34,6 +46,12 @@ export class RateLimiter {
   public markRateLimited(retryAfterSeconds: number): void {
     this.rateLimitedUntil = Date.now() + (retryAfterSeconds * 1000) + 500; // +500ms buffer
     console.log(`[RateLimiter] Rate limited, pausing for ${retryAfterSeconds}s`);
+    this.notifyListeners();
+  }
+
+  // Check if currently rate limited
+  public isRateLimited(): boolean {
+    return Date.now() < this.rateLimitedUntil;
   }
 
   private cleanupWindow() {
@@ -83,6 +101,7 @@ export class RateLimiter {
     this.lastRequestTime = Date.now();
     this.requestTimestamps.push(this.lastRequestTime);
     this.requestTimestamps60s.push(this.lastRequestTime);
+    this.notifyListeners();
   }
 
   // Stream-based acquisition - fires callback as tokens become available
@@ -115,6 +134,7 @@ export class RateLimiter {
     this.lastRequestTime = now;
     this.requestTimestamps.push(now);
     this.requestTimestamps60s.push(now);
+    this.notifyListeners();
     return true;
   }
 
@@ -122,6 +142,11 @@ export class RateLimiter {
     // Actual count from 60-second window
     this.cleanupWindow();
     return this.requestTimestamps60s.length;
+  }
+
+  getRequestsIn10s(): number {
+    this.cleanupWindow();
+    return this.requestTimestamps.length;
   }
 
   getAvailableTokens(): number {
@@ -136,6 +161,32 @@ export class RateLimiter {
     this.requestTimestamps.push(this.lastRequestTime);
     this.requestTimestamps60s.push(this.lastRequestTime);
     this.cleanupWindow();
+    this.notifyListeners();
+  }
+
+  // Get stats for UI display
+  getStats(): RateLimiterStats {
+    this.cleanupWindow();
+    const limit = TIER_LIMITS[this.tier];
+    return {
+      tier: this.tier,
+      requestsPerMinute: this.requestTimestamps60s.length,
+      requestsIn10s: this.requestTimestamps.length,
+      availableTokens: Math.max(0, limit.qp10s - this.requestTimestamps.length),
+      maxPer10s: limit.qp10s,
+      isRateLimited: Date.now() < this.rateLimitedUntil,
+      rateLimitedUntil: this.rateLimitedUntil > Date.now() ? this.rateLimitedUntil : null,
+    };
+  }
+
+  // Subscribe to changes
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notifyListeners(): void {
+    this.listeners.forEach(l => l());
   }
 }
 

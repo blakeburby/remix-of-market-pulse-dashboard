@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { globalRateLimiter, RateLimiterStats } from '@/lib/rate-limiter';
+import { DomeTier } from '@/types/dome';
 
 export type SportType = 'nfl' | 'nba' | 'mlb' | 'nhl' | 'cfb' | 'cbb';
 
@@ -113,6 +115,7 @@ interface Settings {
   feesPercent: number; // percent
   autoRefreshEnabled: boolean;
   autoRefreshIntervalSeconds: number;
+  apiTier: DomeTier;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -123,6 +126,7 @@ const DEFAULT_SETTINGS: Settings = {
   feesPercent: 2,
   autoRefreshEnabled: true,
   autoRefreshIntervalSeconds: 15,
+  apiTier: 'dev',
 };
 
 export interface UseSportsArbitrageV2Result {
@@ -144,6 +148,7 @@ export interface UseSportsArbitrageV2Result {
   setSearchQuery: (query: string) => void;
   diagnostics: DiagnosticEntry[];
   clearDiagnostics: () => void;
+  rateLimiterStats: RateLimiterStats;
 }
 
 function parseTeamsFromTitle(title: string): { a: string; b: string } | null {
@@ -200,6 +205,12 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   const [searchQuery, setSearchQuery] = useState('');
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
 
+  // Subscribe to rate limiter stats for UI updates
+  const rateLimiterStats = useSyncExternalStore(
+    (callback) => globalRateLimiter.subscribe(callback),
+    () => globalRateLimiter.getStats()
+  );
+
   const addDiagnostic = useCallback((entry: Omit<DiagnosticEntry, 'id' | 'timestamp'>) => {
     setDiagnostics((prev) => [
       { ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, timestamp: Date.now() },
@@ -210,7 +221,19 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   const clearDiagnostics = useCallback(() => setDiagnostics([]), []);
 
   const updateSettings = useCallback((updates: Partial<Settings>) => {
-    setSettings((prev) => ({ ...prev, ...updates }));
+    setSettings((prev) => {
+      const newSettings = { ...prev, ...updates };
+      // Sync tier with rate limiter
+      if (updates.apiTier && updates.apiTier !== prev.apiTier) {
+        globalRateLimiter.setTier(updates.apiTier);
+      }
+      return newSettings;
+    });
+  }, []);
+
+  // Sync tier on mount
+  useEffect(() => {
+    globalRateLimiter.setTier(settings.apiTier);
   }, []);
 
   const isLive = useMemo(() => {
@@ -253,7 +276,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     }
   };
 
-  // Helper to fetch with diagnostics
+  // Helper to fetch with diagnostics and rate limiting
   const fetchWithDiagnostics = useCallback(
     async (
       url: string,
@@ -261,6 +284,9 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       apiKey: string,
       ticker?: string
     ): Promise<{ resp: Response | null; json: any; error?: string; responseSnippet?: string }> => {
+      // Wait for rate limiter before making request
+      await globalRateLimiter.waitAndAcquire();
+      
       const startTime = Date.now();
       const parsedParams = parseTimestampParams(url);
       
@@ -274,6 +300,30 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
 
         let json: any = null;
         let responseSnippet: string | undefined;
+
+        // Handle 429 rate limit responses
+        if (resp.status === 429) {
+          const retryAfter = resp.headers.get('Retry-After');
+          const retrySeconds = retryAfter ? parseInt(retryAfter, 10) : 10;
+          globalRateLimiter.markRateLimited(isNaN(retrySeconds) ? 10 : retrySeconds);
+          
+          const text = await resp.text();
+          responseSnippet = truncate(text, 300);
+          
+          addDiagnostic({
+            type,
+            url,
+            status: 429,
+            durationMs: Date.now() - startTime,
+            ok: false,
+            ticker,
+            error: `Rate limited - retry after ${retrySeconds}s`,
+            responseSnippet,
+            parsedParams,
+          });
+          
+          return { resp, json: null, error: `Rate limited`, responseSnippet };
+        }
 
         if (resp.ok) {
           json = await resp.json();
@@ -1075,11 +1125,11 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   // Auto-refresh loop (runs continuously when enabled)
   useEffect(() => {
     if (!settings.autoRefreshEnabled) return;
-    if (settings.autoRefreshIntervalSeconds < 5) return; // sanity floor
+    if (settings.autoRefreshIntervalSeconds < 2) return; // lower floor for continuous mode
 
     const intervalId = setInterval(() => {
-      // Only refresh if not already loading
-      if (!isLoading && !isFetchingPrices) {
+      // Only refresh if not already loading and not rate limited
+      if (!isLoading && !isFetchingPrices && !globalRateLimiter.isRateLimited()) {
         refresh();
       }
     }, settings.autoRefreshIntervalSeconds * 1000);
@@ -1115,5 +1165,6 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     setSearchQuery,
     diagnostics,
     clearDiagnostics,
+    rateLimiterStats,
   };
 }
