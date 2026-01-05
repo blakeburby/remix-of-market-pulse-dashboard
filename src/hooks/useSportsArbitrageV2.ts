@@ -316,8 +316,8 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     ) => {
       const safeTicker = encodeURIComponent(marketTicker);
       const nowMs = Date.now();
-      const startMs = nowMs - 60 * 60 * 1000; // last hour
-      const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startMs}&end_time=${nowMs}&limit=1`;
+      const startMs = nowMs - 30 * 24 * 60 * 60 * 1000; // last 30 days
+      const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startMs}&end_time=${nowMs}&limit=20`;
 
       const { resp, json, responseSnippet } = await fetchWithDiagnostics(url, 'kalshi-price', apiKey, marketTicker);
 
@@ -391,7 +391,32 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         };
       }
 
-      const latest = snapshots[snapshots.length - 1];
+      const latest = (snapshots as any[]).reduce((best: any, s: any) => {
+        const t =
+          (typeof s?.timestamp === 'number' ? s.timestamp : null) ??
+          (typeof s?.ts === 'number' ? s.ts : null);
+        if (best == null) return s;
+
+        const bestT =
+          (typeof best?.timestamp === 'number' ? best.timestamp : null) ??
+          (typeof best?.ts === 'number' ? best.ts : null);
+
+        if (t == null) return best;
+        if (bestT == null) return s;
+        return t > bestT ? s : best;
+      }, (snapshots as any[])[0]);
+
+      const latestTsRaw =
+        (typeof latest?.timestamp === 'number' ? latest.timestamp : null) ??
+        (typeof latest?.ts === 'number' ? latest.ts : null);
+
+      const latestTsMs =
+        typeof latestTsRaw === 'number'
+          ? latestTsRaw < 1e12
+            ? latestTsRaw * 1000
+            : latestTsRaw
+          : Date.now();
+
       const orderbook = latest?.orderbook;
 
       const yesOrders: Array<[number, number]> = Array.isArray(orderbook?.yes) ? orderbook.yes : [];
@@ -417,7 +442,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         yesAsk: typeof yesAskCents === 'number' ? yesAskCents / 100 : null,
         noAsk: typeof noAskCents === 'number' ? noAskCents / 100 : null,
         depth: Number.isFinite(depthDollars) ? depthDollars : null,
-        updatedAt: Date.now(),
+        updatedAt: latestTsMs,
         error: null,
       };
     },
