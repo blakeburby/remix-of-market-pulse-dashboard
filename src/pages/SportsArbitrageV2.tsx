@@ -254,30 +254,102 @@ export default function SportsArbitrageV2Page() {
           </div>
         )}
 
-        {/* Empty State */}
-        {!isLoading && !isFetchingPrices && tradePlans.length === 0 && !error && (
-          <Card className="border-dashed">
+        {/* Empty State - No Markets Found */}
+        {!isLoading && !isFetchingPrices && markets.length === 0 && !error && (
+          <Card className="border-dashed border-yellow-500/50 bg-yellow-500/5">
             <CardContent className="p-8 text-center">
-              <Shield className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-              <h3 className="font-semibold mb-2">No Locked Arbitrage Found</h3>
-              <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                No qualifying locked arbitrage opportunities at this time. 
-                Opportunities must pass all guardrails including freshness, liquidity, and mapping validation.
+              <Trophy className="w-12 h-12 mx-auto text-yellow-500 mb-4" />
+              <h3 className="font-semibold mb-2">No Sports Markets Found</h3>
+              <p className="text-sm text-muted-foreground max-w-md mx-auto mb-4">
+                No sports contracts found for this date. Markets are typically only available for games happening within the next few days/weeks.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Try selecting a date closer to today, or check another sport.
               </p>
             </CardContent>
           </Card>
         )}
 
+        {/* Markets Found but No Arb */}
+        {!isLoading && !isFetchingPrices && markets.length > 0 && tradePlans.length === 0 && !error && (
+          <Card className="border-dashed">
+            <CardContent className="p-8 text-center">
+              <Shield className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+              <h3 className="font-semibold mb-2">No Locked Arbitrage Found</h3>
+              <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                Found {markets.length} market(s) but no qualifying locked arbitrage opportunities. 
+                Opportunities must pass all guardrails including freshness, liquidity, and edge threshold.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Matched Markets Section - Always show when we have markets */}
+        {markets.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Trophy className="w-5 h-5" />
+              Matched Markets ({markets.filter(m => m.polymarket).length} of {markets.length})
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {markets.map((market) => (
+                <Card key={market.kalshi.event_ticker} className={cn(
+                  "transition-colors",
+                  market.polymarket ? "border-green-500/30" : "border-muted"
+                )}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <p className="font-medium text-sm truncate flex-1">
+                        {market.kalshi.event_ticker.replace(/^KX[A-Z]+GAME-/, '').replace(/-/g, ' ')}
+                      </p>
+                      <Badge variant={market.polymarket ? "default" : "secondary"} className="shrink-0 text-xs">
+                        {market.polymarket ? "Matched" : "Kalshi Only"}
+                      </Badge>
+                    </div>
+                    
+                    {market.kalshiPrice && market.polymarketPrice && (
+                      <div className="grid grid-cols-2 gap-2 text-xs mt-3">
+                        <div className="p-2 rounded bg-muted/50">
+                          <p className="text-muted-foreground">Kalshi</p>
+                          <p className="font-bold">${market.kalshiPrice.yesAsk.toFixed(2)} / ${market.kalshiPrice.noAsk.toFixed(2)}</p>
+                        </div>
+                        <div className="p-2 rounded bg-muted/50">
+                          <p className="text-muted-foreground">Polymarket</p>
+                          <p className="font-bold">${market.polymarketPrice.yesAsk.toFixed(2)} / ${market.polymarketPrice.noAsk.toFixed(2)}</p>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {market.error && (
+                      <p className="text-xs text-destructive mt-2">{market.error}</p>
+                    )}
+                    
+                    {!market.pricesFetched && market.polymarket && (
+                      <Skeleton className="h-12 mt-3" />
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Trade Plans Grid */}
         {tradePlans.length > 0 && (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {tradePlans.map((plan) => (
-              <TradePlanCard 
-                key={plan.id} 
-                plan={plan} 
-                onOpenDrawer={() => {}}
-              />
-            ))}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold flex items-center gap-2 text-green-500">
+              <Shield className="w-5 h-5" />
+              Locked Arbitrage Opportunities ({tradePlans.length})
+            </h3>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {tradePlans.map((plan) => (
+                <TradePlanCard 
+                  key={plan.id} 
+                  plan={plan} 
+                  onOpenDrawer={() => {}}
+                />
+              ))}
+            </div>
           </div>
         )}
 
