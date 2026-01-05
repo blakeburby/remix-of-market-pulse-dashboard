@@ -130,24 +130,6 @@ export function ArbitrageSettingsPanel({
 
             <div className="flex items-center justify-between pt-2 border-t border-border">
               <div className="space-y-0.5">
-                <Label htmlFor="showStale" className="text-sm text-foreground">
-                  Show Stale Opportunities
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Display expired with warning badge
-                </p>
-              </div>
-              <Switch
-                id="showStale"
-                checked={settings.showStaleOpportunities}
-                onCheckedChange={(checked) =>
-                  updateSettings({ showStaleOpportunities: checked })
-                }
-              />
-            </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-border">
-              <div className="space-y-0.5">
                 <Label htmlFor="autoRefresh" className="text-sm text-foreground">
                   Auto-Refresh Prices
                 </Label>

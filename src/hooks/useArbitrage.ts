@@ -173,11 +173,12 @@ export function useArbitrage(): UseArbitrageResult {
     const matchesAwaitingPrices = matches.length - matchesWithValidPrices;
     
     // For UI display: separate fresh and stale matches
+    // NOTE: We keep ALL matches regardless of price staleness - matches never disappear
     const freshMatches = matches.filter(m => 
       isMatchFresh(m, now, settings.maxAgeSeconds, settings.maxSkewSeconds)
     );
+    // Stale matches = any match that is NOT fresh (including those without prices)
     const staleMatches = matches.filter(m => 
-      hasLivePrices(m.polymarket) && hasLivePrices(m.kalshi) &&
       !isMatchFresh(m, now, settings.maxAgeSeconds, settings.maxSkewSeconds)
     );
     
@@ -197,7 +198,8 @@ export function useArbitrage(): UseArbitrageResult {
     const filteredOpportunities = filterByProfitThreshold(opportunities, settings.minProfitPercent);
     const lowProfitCount = opportunities.length - filteredOpportunities.length;
     
-    // Separate fresh vs stale for display purposes (both are shown)
+    // Separate fresh vs stale for display purposes
+    // NOTE: BOTH fresh and stale opportunities are ALWAYS returned - nothing disappears
     const freshOpportunities = filteredOpportunities.filter(opp => {
       const match = opp.match;
       return isMatchFresh(match, now, settings.maxAgeSeconds, settings.maxSkewSeconds);
