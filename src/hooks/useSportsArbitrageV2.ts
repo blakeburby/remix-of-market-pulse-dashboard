@@ -111,6 +111,8 @@ interface Settings {
   minLiquidityDollars: number;
   slippageBuffer: number; // percent
   feesPercent: number; // percent
+  autoRefreshEnabled: boolean;
+  autoRefreshIntervalSeconds: number;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -119,6 +121,8 @@ const DEFAULT_SETTINGS: Settings = {
   minLiquidityDollars: 100,
   slippageBuffer: 0.5,
   feesPercent: 2,
+  autoRefreshEnabled: true,
+  autoRefreshIntervalSeconds: 15,
 };
 
 export interface UseSportsArbitrageV2Result {
@@ -1067,6 +1071,21 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   useEffect(() => {
     refresh();
   }, [sport, date, refresh]);
+
+  // Auto-refresh loop (runs continuously when enabled)
+  useEffect(() => {
+    if (!settings.autoRefreshEnabled) return;
+    if (settings.autoRefreshIntervalSeconds < 5) return; // sanity floor
+
+    const intervalId = setInterval(() => {
+      // Only refresh if not already loading
+      if (!isLoading && !isFetchingPrices) {
+        refresh();
+      }
+    }, settings.autoRefreshIntervalSeconds * 1000);
+
+    return () => clearInterval(intervalId);
+  }, [settings.autoRefreshEnabled, settings.autoRefreshIntervalSeconds, refresh, isLoading, isFetchingPrices]);
 
   // Toast on new opportunities
   const prevCount = useRef(0);
