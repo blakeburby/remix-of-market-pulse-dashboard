@@ -358,9 +358,9 @@ function MatchedPairCard({
 }
 
 export default function SportsArbitragePage() {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, isReady, logout } = useAuth();
   const { settings, updateSettings, resetSettings, defaults } = useArbitrageSettings();
-  const { 
+  const {
     matchedPairs,
     opportunities,
     isLoading, 
@@ -404,10 +404,14 @@ export default function SportsArbitragePage() {
   };
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (isReady && !isAuthenticated) {
       navigate('/');
     }
-  }, [isAuthenticated, navigate]);
+  }, [isReady, isAuthenticated, navigate]);
+
+  if (!isReady) {
+    return null;
+  }
 
   if (!isAuthenticated) {
     return null;

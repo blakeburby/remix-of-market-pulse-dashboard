@@ -293,6 +293,8 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
 
     const dateStr = format(date, 'yyyy-MM-dd');
 
+    console.info('[SportsV2] Fetch matching markets', { sport, date: dateStr });
+
     try {
       const response = await fetch(
         `https://api.domeapi.io/v1/matching-markets/sports/${sport}?date=${dateStr}`,
@@ -361,6 +363,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
 
       return result;
     } catch (err) {
+      console.error('[SportsV2] Failed to fetch matching markets', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch markets');
       return [];
     }

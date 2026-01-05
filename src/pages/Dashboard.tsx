@@ -11,8 +11,8 @@ import { Button } from '@/components/ui/button';
 import { Play, Pause, RefreshCw } from 'lucide-react';
 
 export default function DashboardPage() {
-  const { isAuthenticated, logout } = useAuth();
-  const { 
+  const { isAuthenticated, isReady, logout } = useAuth();
+  const {
     summary, 
     syncState, 
     isDiscovering,
@@ -26,10 +26,14 @@ export default function DashboardPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (isReady && !isAuthenticated) {
       navigate('/');
     }
-  }, [isAuthenticated, navigate]);
+  }, [isReady, isAuthenticated, navigate]);
+
+  if (!isReady) {
+    return null;
+  }
 
   if (!isAuthenticated) {
     return null;
