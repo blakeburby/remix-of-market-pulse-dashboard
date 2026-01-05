@@ -188,7 +188,7 @@ export function MarketCard({ market }: MarketCardProps) {
 
               <div className="pt-1 border-t border-border/30 flex items-center justify-between text-[10px] text-muted-foreground">
                 <span>Odds: {formatDecimalOdds(kYes)} / {formatDecimalOdds(kNo)}</span>
-                {market.kalshiPrice?.spread !== null && (
+                {market.kalshiPrice && market.kalshiPrice.spread !== null && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span className="flex items-center gap-0.5">
@@ -252,7 +252,7 @@ export function MarketCard({ market }: MarketCardProps) {
 
               <div className="pt-1 border-t border-border/30 flex items-center justify-between text-[10px] text-muted-foreground">
                 <span>Odds: {formatDecimalOdds(pYes)} / {formatDecimalOdds(pNo)}</span>
-                {market.polymarketPrice?.spread !== null && (
+                {market.polymarketPrice && market.polymarketPrice.spread !== null && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span className="flex items-center gap-0.5">
