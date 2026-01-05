@@ -19,6 +19,7 @@ export function DashboardHeader({ onLogout }: DashboardHeaderProps) {
   const navItems = [
     { path: '/dashboard', label: 'Markets', icon: BarChart3 },
     { path: '/sports', label: 'Sports', icon: Trophy },
+    { path: '/sports-v2', label: 'Sports V2', icon: Trophy },
     { path: '/calculator', label: 'Calculator', icon: Calculator },
   ];
 
