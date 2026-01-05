@@ -260,7 +260,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     [addDiagnostic]
   );
 
-  // Fetch Kalshi market info (title, last_price, close_time)
+  // Fetch Kalshi market info (title, last_price, close_time, and best-effort bid/ask)
   const fetchKalshiMarketInfo = useCallback(
     async (marketTicker: string, apiKey: string) => {
       const safeTicker = encodeURIComponent(marketTicker);
@@ -273,36 +273,100 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       const m = mkts.find((x: any) => x?.market_ticker === marketTicker) ?? mkts[0];
       if (!m) return null;
 
+      const yesBidCents = (typeof m.yes_bid === 'number' ? m.yes_bid : (typeof m.yesBid === 'number' ? m.yesBid : null)) as
+        | number
+        | null;
+      const yesAskCents = (typeof m.yes_ask === 'number' ? m.yes_ask : (typeof m.yesAsk === 'number' ? m.yesAsk : null)) as
+        | number
+        | null;
+      const noBidCents = (typeof m.no_bid === 'number' ? m.no_bid : (typeof m.noBid === 'number' ? m.noBid : null)) as
+        | number
+        | null;
+      const noAskCents = (typeof m.no_ask === 'number' ? m.no_ask : (typeof m.noAsk === 'number' ? m.noAsk : null)) as
+        | number
+        | null;
+
       return {
         title: typeof m.title === 'string' ? m.title : null,
         closeTimeMs: msFromSeconds(m.close_time ?? m.closeTime ?? m.end_time ?? m.endTime),
         lastPriceCents: typeof m.last_price === 'number' ? m.last_price : null,
+        yesBidCents,
+        yesAskCents,
+        noBidCents,
+        noAskCents,
       };
     },
     [fetchWithDiagnostics]
   );
 
-  // Fetch Kalshi orderbook, fallback to last_price if orderbook empty
+  // Fetch Kalshi orderbook, fallback to market bid/ask or last_price if orderbook empty
   const fetchKalshiPrices = useCallback(
-    async (marketTicker: string, apiKey: string) => {
+    async (
+      marketTicker: string,
+      apiKey: string,
+      marketInfo?: {
+        title: string | null;
+        closeTimeMs: number | null;
+        lastPriceCents: number | null;
+        yesBidCents?: number | null;
+        yesAskCents?: number | null;
+        noBidCents?: number | null;
+        noAskCents?: number | null;
+      } | null
+    ) => {
       const safeTicker = encodeURIComponent(marketTicker);
-      const nowMs = Date.now();
-      const startMs = nowMs - 60 * 60 * 1000; // last hour
-      const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startMs}&end_time=${nowMs}&limit=1`;
-      
+      const nowSec = Math.floor(Date.now() / 1000);
+      const startSec = nowSec - 60 * 60; // last hour
+      const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startSec}&end_time=${nowSec}&limit=1`;
+
       const { resp, json, responseSnippet } = await fetchWithDiagnostics(url, 'kalshi-price', apiKey, marketTicker);
 
       if (!resp?.ok || !json) {
-        return { yesAsk: null, noAsk: null, yesBid: null, noBid: null, depth: null, updatedAt: null, error: responseSnippet || 'Failed to fetch orderbook' };
+        return {
+          yesAsk: null,
+          noAsk: null,
+          yesBid: null,
+          noBid: null,
+          depth: null,
+          updatedAt: null,
+          error: responseSnippet || 'Failed to fetch orderbook',
+        };
       }
 
       const snapshots = Array.isArray(json?.snapshots) ? json.snapshots : [];
-      
+
       if (snapshots.length === 0) {
-        // Fallback: try to get last_price from /markets endpoint
-        const marketInfo = await fetchKalshiMarketInfo(marketTicker, apiKey);
-        if (marketInfo?.lastPriceCents != null && marketInfo.lastPriceCents > 0) {
-          const yesMid = marketInfo.lastPriceCents / 100;
+        // Fallback: /markets often has bid/ask even when last_price is 0
+        const info = marketInfo ?? (await fetchKalshiMarketInfo(marketTicker, apiKey));
+
+        const yesBid =
+          typeof info?.yesBidCents === 'number' && info.yesBidCents > 0 ? info.yesBidCents / 100 : null;
+        const yesAsk =
+          typeof info?.yesAskCents === 'number' && info.yesAskCents > 0 ? info.yesAskCents / 100 : null;
+        const noBid =
+          typeof info?.noBidCents === 'number' && info.noBidCents > 0 ? info.noBidCents / 100 : null;
+        const noAsk =
+          typeof info?.noAskCents === 'number' && info.noAskCents > 0 ? info.noAskCents / 100 : null;
+
+        const derivedYesAsk = yesAsk ?? (noBid !== null ? 1 - noBid : null);
+        const derivedNoAsk = noAsk ?? (yesBid !== null ? 1 - yesBid : null);
+
+        if (derivedYesAsk !== null || derivedNoAsk !== null || yesBid !== null || noBid !== null) {
+          return {
+            yesAsk: derivedYesAsk,
+            noAsk: derivedNoAsk,
+            yesBid,
+            noBid,
+            depth: 0, // unknown
+            updatedAt: Date.now(),
+            title: info?.title ?? null,
+            closeTimeMs: info?.closeTimeMs ?? null,
+            error: 'Using market bid/ask (no orderbook)',
+          };
+        }
+
+        if (info?.lastPriceCents != null && info.lastPriceCents > 0) {
+          const yesMid = info.lastPriceCents / 100;
           const noMid = 1 - yesMid;
           return {
             yesAsk: yesMid,
@@ -311,12 +375,20 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
             noBid: noMid,
             depth: 0, // unknown
             updatedAt: Date.now(),
-            title: marketInfo.title,
-            closeTimeMs: marketInfo.closeTimeMs,
+            title: info.title,
+            closeTimeMs: info.closeTimeMs,
             error: 'Using last_price (no orderbook)',
           };
         }
-        return { yesAsk: null, noAsk: null, yesBid: null, noBid: null, depth: null, updatedAt: null, error: 'No orderbook and last_price=0' };
+        return {
+          yesAsk: null,
+          noAsk: null,
+          yesBid: null,
+          noBid: null,
+          depth: null,
+          updatedAt: null,
+          error: 'No orderbook and no market bid/ask',
+        };
       }
 
       const latest = snapshots[snapshots.length - 1];
@@ -328,12 +400,14 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       const yesBidCents = yesOrders.length ? Math.max(...yesOrders.map((o) => o[0])) : null;
       const noBidCents = noOrders.length ? Math.max(...noOrders.map((o) => o[0])) : null;
 
-      // Best executable YES ask can be derived from best NO bid (complement pricing)
+      // Best executable YES/NO ask can be derived from the opposite side best bid (complement pricing)
       const yesAskCents = typeof noBidCents === 'number' ? 100 - noBidCents : null;
       const noAskCents = typeof yesBidCents === 'number' ? 100 - yesBidCents : null;
 
-      const yesBidQty = typeof yesBidCents === 'number' ? (yesOrders.find((o) => o[0] === yesBidCents)?.[1] ?? 0) : 0;
-      const noBidQty = typeof noBidCents === 'number' ? (noOrders.find((o) => o[0] === noBidCents)?.[1] ?? 0) : 0;
+      const yesBidQty =
+        typeof yesBidCents === 'number' ? (yesOrders.find((o) => o[0] === yesBidCents)?.[1] ?? 0) : 0;
+      const noBidQty =
+        typeof noBidCents === 'number' ? (noOrders.find((o) => o[0] === noBidCents)?.[1] ?? 0) : 0;
 
       const depthDollars = Math.min(yesBidQty, noBidQty) / 100; // best-effort
 
@@ -370,19 +444,19 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
 
       // Fallback to orderbook if market-price fails
       if (aPrice === null || bPrice === null) {
-        const nowMs = Date.now();
-        const startMs = nowMs - 60 * 60 * 1000;
-        
+        const nowSec = Math.floor(Date.now() / 1000);
+        const startSec = nowSec - 60 * 60;
+
         const orderbookPromises = [];
         if (aPrice === null) {
-          const obUrlA = `https://api.domeapi.io/v1/polymarket/orderbooks?token_id=${tokenIds[0]}&start_time=${startMs}&end_time=${nowMs}&limit=1`;
+          const obUrlA = `https://api.domeapi.io/v1/polymarket/orderbooks?token_id=${tokenIds[0]}&start_time=${startSec}&end_time=${nowSec}&limit=1`;
           orderbookPromises.push(fetchWithDiagnostics(obUrlA, 'polymarket-orderbook', apiKey, tokenIds[0]));
         } else {
           orderbookPromises.push(Promise.resolve(null));
         }
-        
+
         if (bPrice === null) {
-          const obUrlB = `https://api.domeapi.io/v1/polymarket/orderbooks?token_id=${tokenIds[1]}&start_time=${startMs}&end_time=${nowMs}&limit=1`;
+          const obUrlB = `https://api.domeapi.io/v1/polymarket/orderbooks?token_id=${tokenIds[1]}&start_time=${startSec}&end_time=${nowSec}&limit=1`;
           orderbookPromises.push(fetchWithDiagnostics(obUrlB, 'polymarket-orderbook', apiKey, tokenIds[1]));
         } else {
           orderbookPromises.push(Promise.resolve(null));
@@ -521,33 +595,47 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
               return { ...market, pricesFetched: true, kalshiError: null, polymarketError: 'No match on Polymarket' };
             }
 
-            // Use first ticker for both YES and NO (single market has both sides)
             const tickerA = market.kalshi.market_tickers[0] ?? null;
+            const tickerB = market.kalshi.market_tickers[1] ?? null;
 
-            if (!tickerA) {
+            if (!tickerA || !tickerB) {
               return {
                 ...market,
                 pricesFetched: true,
-                kalshiError: 'No Kalshi market ticker',
+                kalshiError: 'Missing Kalshi outcome tickers',
                 polymarketError: null,
               };
             }
 
-            const [kalshiRes, polyRes, kalshiInfo] = await Promise.all([
-              fetchKalshiPrices(tickerA, apiKey),
-              fetchPolymarketPrices(market.polymarket.token_ids, apiKey),
+            const [infoA, infoB] = await Promise.all([
               fetchKalshiMarketInfo(tickerA, apiKey),
+              fetchKalshiMarketInfo(tickerB, apiKey),
             ]);
 
-            const title = kalshiInfo?.title ?? kalshiRes?.title ?? market.title;
+            const [kA, kB, polyRes] = await Promise.all([
+              fetchKalshiPrices(tickerA, apiKey, infoA),
+              fetchKalshiPrices(tickerB, apiKey, infoB),
+              fetchPolymarketPrices(market.polymarket.token_ids, apiKey),
+            ]);
+
+            const title = infoA?.title ?? kA?.title ?? market.title;
             const teams = title ? parseTeamsFromTitle(title) : null;
 
+            // For Kalshi sports winner markets, each team has its own market ticker:
+            // - outcome A price ~= YES on tickerA
+            // - outcome B price ~= YES on tickerB (or NO on tickerA)
+            const aPrice = kA.yesAsk ?? kA.yesBid ?? null;
+            const bPrice = kB.yesAsk ?? kB.yesBid ?? kA.noAsk ?? kA.noBid ?? null;
+
             const kalshiPrice = {
-              yesAsk: kalshiRes.yesAsk,
-              noAsk: kalshiRes.noAsk,
-              yesBid: kalshiRes.yesBid ?? null,
-              noBid: kalshiRes.noBid ?? null,
-              depth: kalshiRes.depth,
+              yesAsk: aPrice,
+              noAsk: bPrice,
+              yesBid: kA.yesBid ?? null,
+              noBid: kB.yesBid ?? null,
+              depth:
+                typeof kA.depth === 'number' && typeof kB.depth === 'number'
+                  ? Math.min(kA.depth, kB.depth)
+                  : (kA.depth ?? kB.depth ?? null),
             };
 
             const polymarketPrice = {
@@ -556,10 +644,18 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
               depth: polyRes.depth,
             };
 
-            const kalshiError =
-              kalshiRes.yesAsk === null || kalshiRes.noAsk === null
-                ? kalshiRes.error || 'No Kalshi quotes'
-                : kalshiRes.error || null; // keep warning like "Using last_price"
+            let kalshiError: string | null = null;
+            if (aPrice === null || bPrice === null) {
+              const parts: string[] = [];
+              if (aPrice === null) parts.push(`A(${tickerA}): ${kA.error ?? 'no quotes'}`);
+              if (bPrice === null) parts.push(`B(${tickerB}): ${kB.error ?? 'no quotes'}`);
+              kalshiError = parts.join(' | ');
+            } else {
+              const warns = [kA.error, kB.error].filter(
+                (x): x is string => typeof x === 'string' && x.length > 0
+              );
+              kalshiError = warns.length ? warns.join(' | ') : null;
+            }
 
             const polymarketError =
               polyRes.yesAsk === null || polyRes.noAsk === null
@@ -571,12 +667,12 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
               title,
               outcomeA: teams?.a ?? null,
               outcomeB: teams?.b ?? null,
-              expiresAt: kalshiInfo?.closeTimeMs ?? kalshiRes?.closeTimeMs ?? market.expiresAt,
+              expiresAt: infoA?.closeTimeMs ?? kA?.closeTimeMs ?? market.expiresAt,
 
               kalshiPrice,
               polymarketPrice,
 
-              kalshiUpdatedAt: kalshiRes.updatedAt,
+              kalshiUpdatedAt: kA.updatedAt ?? kB.updatedAt,
               polymarketUpdatedAt: polyRes.updatedAt,
 
               pricesFetched: true,
