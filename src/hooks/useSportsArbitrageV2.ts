@@ -273,6 +273,15 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
 
         if (resp.ok) {
           json = await resp.json();
+
+          // If snapshots are empty, store a snippet so diagnostics are actionable.
+          if (
+            (type === 'kalshi-price' || type === 'kalshi-price-retry' || type === 'polymarket-orderbook') &&
+            Array.isArray(json?.snapshots) &&
+            json.snapshots.length === 0
+          ) {
+            responseSnippet = truncate(JSON.stringify(json), 300);
+          }
         } else {
           const text = await resp.text();
           responseSnippet = truncate(text, 300);
@@ -348,8 +357,157 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     [fetchWithDiagnostics]
   );
 
-  // Fetch Kalshi orderbook with retry logic and fallback to market bid/ask
-  const fetchKalshiPrices = useCallback(
+  type KalshiQuoteSource = 'orderbook' | 'market_bid_ask' | 'market_last_price' | 'none';
+
+  type KalshiQuote = {
+    yesAsk: number | null; // prob (0-1)
+    noAsk: number | null; // prob (0-1)
+    yesBid: number | null; // prob (0-1)
+    noBid: number | null; // prob (0-1)
+    depth: number | null; // dollars
+    updatedAt: number | null; // ms
+    title: string | null;
+    closeTimeMs: number | null;
+    source: KalshiQuoteSource;
+    error: string | null;
+  };
+
+  const asCents = (value: unknown): number | null => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
+    // Probability (0-1)
+    if (value > 0 && value <= 1) return value * 100;
+    // Cents (0-100)
+    if (value > 1 && value <= 100) return value;
+    return null;
+  };
+
+  const centsToProb = (cents: number | null): number | null =>
+    typeof cents === 'number' && Number.isFinite(cents) ? cents / 100 : null;
+
+  const fetchKalshiOrderbookQuote = useCallback(
+    async (
+      marketTicker: string,
+      startMs: number,
+      endMs: number,
+      apiKey: string,
+      isRetry: boolean
+    ): Promise<{ status: number | null; responseSnippet?: string; timestampMsError: boolean; quote: KalshiQuote | null; reason?: string }> => {
+      const safeTicker = encodeURIComponent(marketTicker);
+      const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${toMs(startMs)}&end_time=${toMs(
+        endMs
+      )}&limit=1`;
+
+      const { resp, json, responseSnippet } = await fetchWithDiagnostics(
+        url,
+        isRetry ? 'kalshi-price-retry' : 'kalshi-price',
+        apiKey,
+        marketTicker
+      );
+
+      const timestampMsError = !!responseSnippet?.includes('timestamp in milliseconds');
+
+      if (!resp?.ok || !json) {
+        return {
+          status: resp?.status ?? null,
+          responseSnippet,
+          timestampMsError,
+          quote: null,
+          reason: resp ? `Orderbook HTTP ${resp.status}` : 'Orderbook network error',
+        };
+      }
+
+      const snapshots = Array.isArray(json?.snapshots) ? json.snapshots : [];
+      if (snapshots.length === 0) {
+        return {
+          status: resp.status,
+          responseSnippet,
+          timestampMsError,
+          quote: null,
+          reason: 'No orderbook snapshots',
+        };
+      }
+
+      // Even with limit=1, stay defensive.
+      const latest = (snapshots as any[]).reduce((best: any, s: any) => {
+        const t = (typeof s?.timestamp === 'number' ? s.timestamp : null) ?? (typeof s?.ts === 'number' ? s.ts : null);
+        if (best == null) return s;
+        const bestT =
+          (typeof best?.timestamp === 'number' ? best.timestamp : null) ?? (typeof best?.ts === 'number' ? best.ts : null);
+        if (t == null) return best;
+        if (bestT == null) return s;
+        return t > bestT ? s : best;
+      }, (snapshots as any[])[0]);
+
+      const latestTsRaw =
+        (typeof latest?.timestamp === 'number' ? latest.timestamp : null) ?? (typeof latest?.ts === 'number' ? latest.ts : null);
+      const updatedAt = typeof latestTsRaw === 'number' ? toMs(latestTsRaw) : Date.now();
+
+      const ob = latest?.orderbook ?? null;
+      const yesRaw = Array.isArray(ob?.yes) ? ob.yes : [];
+      const noRaw = Array.isArray(ob?.no) ? ob.no : [];
+
+      // Accept both formats:
+      // - Tuple: [[price, qty], ...]
+      // - Object: [{ price, quantity }, ...]
+      const parseOrders = (orders: any[]): Array<[number, number]> => {
+        if (!Array.isArray(orders)) return [];
+        return orders
+          .map((o) => {
+            if (Array.isArray(o)) return [o[0], o[1]] as [unknown, unknown];
+            if (typeof o === 'object' && o !== null) return [o.price ?? o.priceCents, o.quantity ?? o.qty ?? o.size] as [unknown, unknown];
+            return [null, null] as [unknown, unknown];
+          })
+          .map(([p, q]) => [asCents(p), typeof q === 'number' && Number.isFinite(q) ? q : 0] as const)
+          .filter((x): x is [number, number] => typeof x[0] === 'number' && Number.isFinite(x[0]) && x[0] > 0);
+      };
+
+      const yesOrders = parseOrders(yesRaw);
+      const noOrders = parseOrders(noRaw);
+
+      const yesBidCents = yesOrders.length ? Math.max(...yesOrders.map((o) => o[0])) : null;
+      const noBidCents = noOrders.length ? Math.max(...noOrders.map((o) => o[0])) : null;
+
+      // Executable asks (conservative) are the complement of the opposite-side best bid.
+      const yesAskCents = typeof noBidCents === 'number' ? 100 - noBidCents : null;
+      const noAskCents = typeof yesBidCents === 'number' ? 100 - yesBidCents : null;
+
+      const yesBidQty = typeof yesBidCents === 'number' ? (yesOrders.find((o) => o[0] === yesBidCents)?.[1] ?? 0) : 0;
+      const noBidQty = typeof noBidCents === 'number' ? (noOrders.find((o) => o[0] === noBidCents)?.[1] ?? 0) : 0;
+      const depth = yesBidQty > 0 && noBidQty > 0 ? Math.min(yesBidQty, noBidQty) / 100 : null;
+
+      // If there are literally no bids on either side, treat as unusable.
+      if (yesBidCents == null && noBidCents == null) {
+        return {
+          status: resp.status,
+          responseSnippet,
+          timestampMsError,
+          quote: null,
+          reason: 'No orderbook depth (no YES bids and no NO bids)',
+        };
+      }
+
+      return {
+        status: resp.status,
+        responseSnippet,
+        timestampMsError,
+        quote: {
+          yesAsk: centsToProb(yesAskCents),
+          noAsk: centsToProb(noAskCents),
+          yesBid: centsToProb(yesBidCents),
+          noBid: centsToProb(noBidCents),
+          depth,
+          updatedAt,
+          title: null,
+          closeTimeMs: null,
+          source: 'orderbook',
+          error: null,
+        },
+      };
+    },
+    [fetchWithDiagnostics]
+  );
+
+  const fetchKalshiMarketFallback = useCallback(
     async (
       marketTicker: string,
       apiKey: string,
@@ -362,182 +520,118 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         noBidCents?: number | null;
         noAskCents?: number | null;
       } | null
-    ) => {
-      const safeTicker = encodeURIComponent(marketTicker);
-      const nowMs = toMs(Date.now());
-      const startMs = toMs(nowMs - 30 * 24 * 60 * 60 * 1000); // last 30 days, normalized
+    ): Promise<KalshiQuote> => {
+      const info = marketInfo ?? (await fetchKalshiMarketInfo(marketTicker, apiKey));
 
-      // Helper to attempt orderbook fetch
-      const attemptOrderbook = async (
-        start: number,
-        end: number,
-        isRetry: boolean
-      ): Promise<{ resp: Response | null; json: any; responseSnippet?: string }> => {
-        const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${start}&end_time=${end}&limit=20`;
-        return fetchWithDiagnostics(
-          url,
-          isRetry ? 'kalshi-price-retry' : 'kalshi-price',
-          apiKey,
-          marketTicker
-        );
-      };
+      const yesBidCents = asCents(info?.yesBidCents ?? null);
+      const noBidCents = asCents(info?.noBidCents ?? null);
+      const yesAskCents = asCents(info?.yesAskCents ?? null) ?? (typeof noBidCents === 'number' ? 100 - noBidCents : null);
+      const noAskCents = asCents(info?.noAskCents ?? null) ?? (typeof yesBidCents === 'number' ? 100 - yesBidCents : null);
 
-      // First attempt with normalized ms timestamps
-      let { resp, json, responseSnippet } = await attemptOrderbook(startMs, nowMs, false);
+      const hasAnyBidAsk = [yesBidCents, noBidCents, yesAskCents, noAskCents].some((x) => typeof x === 'number');
 
-      // Retry if we got a 400 with timestamp error message
-      if (resp?.status === 400 && responseSnippet?.includes('timestamp in milliseconds')) {
-        // Force ensure milliseconds (double-check normalization)
-        const forcedNowMs = toMs(Date.now());
-        const forcedStartMs = toMs(forcedNowMs - 30 * 24 * 60 * 60 * 1000);
-        const retryResult = await attemptOrderbook(forcedStartMs, forcedNowMs, true);
-        resp = retryResult.resp;
-        json = retryResult.json;
-        responseSnippet = retryResult.responseSnippet;
-      }
-
-      // Helper to use market info as fallback
-      const useMarketFallback = async (reason: string) => {
-        const info = marketInfo ?? (await fetchKalshiMarketInfo(marketTicker, apiKey));
-
-        const yesBid =
-          typeof info?.yesBidCents === 'number' && info.yesBidCents > 0 ? info.yesBidCents / 100 : null;
-        const yesAsk =
-          typeof info?.yesAskCents === 'number' && info.yesAskCents > 0 ? info.yesAskCents / 100 : null;
-        const noBid =
-          typeof info?.noBidCents === 'number' && info.noBidCents > 0 ? info.noBidCents / 100 : null;
-        const noAsk =
-          typeof info?.noAskCents === 'number' && info.noAskCents > 0 ? info.noAskCents / 100 : null;
-
-        const derivedYesAsk = yesAsk ?? (noBid !== null ? 1 - noBid : null);
-        const derivedNoAsk = noAsk ?? (yesBid !== null ? 1 - yesBid : null);
-
-        if (derivedYesAsk !== null || derivedNoAsk !== null || yesBid !== null || noBid !== null) {
-          return {
-            yesAsk: derivedYesAsk,
-            noAsk: derivedNoAsk,
-            yesBid,
-            noBid,
-            depth: 0,
-            updatedAt: Date.now(),
-            title: info?.title ?? null,
-            closeTimeMs: info?.closeTimeMs ?? null,
-            error: `${reason} - using market bid/ask`,
-          };
-        }
-
-        if (info?.lastPriceCents != null && info.lastPriceCents > 0) {
-          const yesMid = info.lastPriceCents / 100;
-          const noMid = 1 - yesMid;
-          return {
-            yesAsk: yesMid,
-            noAsk: noMid,
-            yesBid: yesMid,
-            noBid: noMid,
-            depth: 0,
-            updatedAt: Date.now(),
-            title: info?.title ?? null,
-            closeTimeMs: info?.closeTimeMs ?? null,
-            error: `${reason} - using last_price`,
-          };
-        }
-
+      if (hasAnyBidAsk) {
         return {
-          yesAsk: null,
-          noAsk: null,
-          yesBid: null,
-          noBid: null,
-          depth: null,
-          updatedAt: null,
-          error: `${reason} - no market bid/ask or last_price`,
+          yesAsk: centsToProb(yesAskCents),
+          noAsk: centsToProb(noAskCents),
+          yesBid: centsToProb(yesBidCents),
+          noBid: centsToProb(noBidCents),
+          depth: 0,
+          updatedAt: Date.now(),
+          title: info?.title ?? null,
+          closeTimeMs: info?.closeTimeMs ?? null,
+          source: 'market_bid_ask',
+          error: null,
         };
-      };
-
-      // If orderbook request failed, try market fallback
-      if (!resp?.ok || !json) {
-        return useMarketFallback(responseSnippet || 'Orderbook request failed');
       }
 
-      const snapshots = Array.isArray(json?.snapshots) ? json.snapshots : [];
-
-      if (snapshots.length === 0) {
-        return useMarketFallback('No orderbook snapshots');
+      const lastCents = typeof info?.lastPriceCents === 'number' ? info.lastPriceCents : null;
+      if (typeof lastCents === 'number' && lastCents > 0) {
+        const yesProb = lastCents / 100;
+        const noProb = 1 - yesProb;
+        return {
+          yesAsk: yesProb,
+          noAsk: noProb,
+          yesBid: yesProb,
+          noBid: noProb,
+          depth: 0,
+          updatedAt: Date.now(),
+          title: info?.title ?? null,
+          closeTimeMs: info?.closeTimeMs ?? null,
+          source: 'market_last_price',
+          error: null,
+        };
       }
 
-      // Find latest snapshot
-      const latest = (snapshots as any[]).reduce((best: any, s: any) => {
-        const t =
-          (typeof s?.timestamp === 'number' ? s.timestamp : null) ??
-          (typeof s?.ts === 'number' ? s.ts : null);
-        if (best == null) return s;
-
-        const bestT =
-          (typeof best?.timestamp === 'number' ? best.timestamp : null) ??
-          (typeof best?.ts === 'number' ? best.ts : null);
-
-        if (t == null) return best;
-        if (bestT == null) return s;
-        return t > bestT ? s : best;
-      }, (snapshots as any[])[0]);
-
-      const latestTsRaw =
-        (typeof latest?.timestamp === 'number' ? latest.timestamp : null) ??
-        (typeof latest?.ts === 'number' ? latest.ts : null);
-
-      const latestTsMs = typeof latestTsRaw === 'number' ? toMs(latestTsRaw) : Date.now();
-
-      const orderbook = latest?.orderbook;
-
-      // Parse orderbook - handle both tuple [price, qty] and object { price, quantity } formats
-      const parseOrders = (orders: any[]): Array<[number, number]> => {
-        if (!Array.isArray(orders)) return [];
-        return orders.map((o) => {
-          if (Array.isArray(o)) return [o[0], o[1]] as [number, number];
-          if (typeof o === 'object' && o !== null) {
-            const price = o.price ?? o.priceCents ?? 0;
-            const qty = o.quantity ?? o.qty ?? o.size ?? 0;
-            return [price, qty] as [number, number];
-          }
-          return [0, 0] as [number, number];
-        });
-      };
-
-      const yesOrders = parseOrders(orderbook?.yes);
-      const noOrders = parseOrders(orderbook?.no);
-
-      let yesBidCents = yesOrders.length ? Math.max(...yesOrders.map((o) => o[0])) : null;
-      let noBidCents = noOrders.length ? Math.max(...noOrders.map((o) => o[0])) : null;
-
-      // Sanity check: if price looks like dollars (0 < p < 1), convert to cents
-      if (yesBidCents !== null && yesBidCents > 0 && yesBidCents < 1) {
-        yesBidCents = yesBidCents * 100;
-      }
-      if (noBidCents !== null && noBidCents > 0 && noBidCents < 1) {
-        noBidCents = noBidCents * 100;
-      }
-
-      // Best executable YES/NO ask derived from opposite side best bid (complement pricing)
-      const yesAskCents = typeof noBidCents === 'number' ? 100 - noBidCents : null;
-      const noAskCents = typeof yesBidCents === 'number' ? 100 - yesBidCents : null;
-
-      const yesBidQty =
-        typeof yesBidCents === 'number' ? (yesOrders.find((o) => o[0] === yesBidCents)?.[1] ?? 0) : 0;
-      const noBidQty =
-        typeof noBidCents === 'number' ? (noOrders.find((o) => o[0] === noBidCents)?.[1] ?? 0) : 0;
-
-      const depthDollars = Math.min(yesBidQty, noBidQty) / 100;
+      const lastPriceDetail =
+        lastCents === 0 ? 'last_price=0' : lastCents == null ? 'last_price missing' : `last_price=${lastCents}`;
 
       return {
-        yesBid: typeof yesBidCents === 'number' ? yesBidCents / 100 : null,
-        noBid: typeof noBidCents === 'number' ? noBidCents / 100 : null,
-        yesAsk: typeof yesAskCents === 'number' ? yesAskCents / 100 : null,
-        noAsk: typeof noAskCents === 'number' ? noAskCents / 100 : null,
-        depth: Number.isFinite(depthDollars) ? depthDollars : null,
-        updatedAt: latestTsMs,
-        error: null,
+        yesAsk: null,
+        noAsk: null,
+        yesBid: null,
+        noBid: null,
+        depth: null,
+        updatedAt: null,
+        title: info?.title ?? null,
+        closeTimeMs: info?.closeTimeMs ?? null,
+        source: 'none',
+        error: `No liquidity (no market bid/ask; ${lastPriceDetail})`,
       };
     },
-    [fetchWithDiagnostics, fetchKalshiMarketInfo]
+    [fetchKalshiMarketInfo]
+  );
+
+  const getKalshiQuoteForTicker = useCallback(
+    async (
+      marketTicker: string,
+      apiKey: string,
+      marketInfo?: {
+        title: string | null;
+        closeTimeMs: number | null;
+        lastPriceCents: number | null;
+        yesBidCents?: number | null;
+        yesAskCents?: number | null;
+        noBidCents?: number | null;
+        noAskCents?: number | null;
+      } | null
+    ): Promise<KalshiQuote> => {
+      const nowMs = toMs(Date.now());
+      const startMs = toMs(nowMs - 24 * 60 * 60 * 1000);
+
+      let orderbookReason: string | null = null;
+
+      const first = await fetchKalshiOrderbookQuote(marketTicker, startMs, nowMs, apiKey, false);
+      let orderbook = first;
+
+      if (orderbook.status === 400 && orderbook.timestampMsError) {
+        const forcedNow = toMs(Date.now());
+        const forcedStart = toMs(forcedNow - 24 * 60 * 60 * 1000);
+        orderbook = await fetchKalshiOrderbookQuote(marketTicker, forcedStart, forcedNow, apiKey, true);
+      }
+
+      if (orderbook.quote) {
+        const base = orderbook.quote;
+        const info = marketInfo ?? (await fetchKalshiMarketInfo(marketTicker, apiKey));
+        return {
+          ...base,
+          title: info?.title ?? null,
+          closeTimeMs: info?.closeTimeMs ?? null,
+        };
+      }
+
+      orderbookReason = orderbook.reason ?? (orderbook.status ? `Orderbook HTTP ${orderbook.status}` : 'Orderbook failed');
+
+      const fallback = await fetchKalshiMarketFallback(marketTicker, apiKey, marketInfo);
+      if (fallback.source !== 'none') return fallback;
+
+      // If both paths failed, include the orderbook reason too.
+      return {
+        ...fallback,
+        error: `${orderbookReason}; ${fallback.error ?? 'No liquidity'}`,
+      };
+    },
+    [fetchKalshiOrderbookQuote, fetchKalshiMarketFallback, fetchKalshiMarketInfo]
   );
 
   // Fetch Polymarket prices with orderbook fallback
@@ -560,8 +654,8 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
 
       // Fallback to orderbook if market-price fails
       if (aPrice === null || bPrice === null) {
-        const nowMs = Date.now();
-        const startMs = nowMs - 60 * 60 * 1000;
+        const nowMs = toMs(Date.now());
+        const startMs = toMs(nowMs - 60 * 60 * 1000);
 
         const orderbookPromises = [];
         if (aPrice === null) {
@@ -729,8 +823,8 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
             ]);
 
             const [kA, kB, polyRes] = await Promise.all([
-              fetchKalshiPrices(tickerA, apiKey, infoA),
-              fetchKalshiPrices(tickerB, apiKey, infoB),
+              getKalshiQuoteForTicker(tickerA, apiKey, infoA),
+              getKalshiQuoteForTicker(tickerB, apiKey, infoB),
               fetchPolymarketPrices(market.polymarket.token_ids, apiKey),
             ]);
 
@@ -740,14 +834,17 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
             // For Kalshi sports winner markets, each team has its own market ticker:
             // - outcome A price ~= YES on tickerA
             // - outcome B price ~= YES on tickerB (or NO on tickerA)
-            const aPrice = kA.yesAsk ?? kA.yesBid ?? null;
-            const bPrice = kB.yesAsk ?? kB.yesBid ?? kA.noAsk ?? kA.noBid ?? null;
+            const aAsk = kA.yesAsk;
+            const bAsk = kB.yesAsk ?? kA.noAsk;
+
+            const aBid = kA.yesBid;
+            const bBid = kB.yesBid ?? kA.noBid;
 
             const kalshiPrice = {
-              yesAsk: aPrice,
-              noAsk: bPrice,
-              yesBid: kA.yesBid ?? null,
-              noBid: kB.yesBid ?? null,
+              yesAsk: aAsk,
+              noAsk: bAsk,
+              yesBid: aBid,
+              noBid: bBid,
               depth:
                 typeof kA.depth === 'number' && typeof kB.depth === 'number'
                   ? Math.min(kA.depth, kB.depth)
@@ -760,17 +857,33 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
               depth: polyRes.depth,
             };
 
+            const kalshiReasonForYesAsk = () => {
+              if (kA.source === 'none') return kA.error ?? 'No liquidity';
+              if (kA.source === 'orderbook' && kA.yesAsk == null) return 'No NO bids (cannot derive YES ask)';
+              if (kA.source === 'market_bid_ask' && kA.yesAsk == null) return 'No market YES ask';
+              return 'No Kalshi YES ask';
+            };
+
+            const kalshiReasonForBAask = () => {
+              // Prefer B ticker first; if we fell back to kA.noAsk, explain that.
+              if (kB.yesAsk != null) return null;
+              if (kB.source === 'none') return kB.error ?? 'No liquidity';
+              if (kB.source === 'orderbook' && kB.yesAsk == null) return 'No NO bids (cannot derive YES ask)';
+              if (kB.source === 'market_bid_ask' && kB.yesAsk == null) return 'No market YES ask';
+              if (kA.noAsk == null) {
+                if (kA.source === 'none') return kA.error ?? 'No liquidity';
+                if (kA.source === 'orderbook') return 'No YES bids (cannot derive NO ask)';
+                return 'No Kalshi NO ask';
+              }
+              return 'Using NO ask from outcome A (B ticker missing YES ask)';
+            };
+
             let kalshiError: string | null = null;
-            if (aPrice === null || bPrice === null) {
+            if (aAsk === null || bAsk === null) {
               const parts: string[] = [];
-              if (aPrice === null) parts.push(`A(${tickerA}): ${kA.error ?? 'no quotes'}`);
-              if (bPrice === null) parts.push(`B(${tickerB}): ${kB.error ?? 'no quotes'}`);
+              if (aAsk === null) parts.push(`A(${tickerA}): ${kalshiReasonForYesAsk()}`);
+              if (bAsk === null) parts.push(`B(${tickerB}): ${kalshiReasonForBAask() ?? 'No quote'}`);
               kalshiError = parts.join(' | ');
-            } else {
-              const warns = [kA.error, kB.error].filter(
-                (x): x is string => typeof x === 'string' && x.length > 0
-              );
-              kalshiError = warns.length ? warns.join(' | ') : null;
             }
 
             const polymarketError =
@@ -805,7 +918,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         setIsFetchingPrices(false);
       }
     },
-    [getApiKey, fetchKalshiPrices, fetchPolymarketPrices, fetchKalshiMarketInfo]
+    [getApiKey, getKalshiQuoteForTicker, fetchPolymarketPrices, fetchKalshiMarketInfo]
   );
 
   const refresh = useCallback(async () => {
