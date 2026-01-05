@@ -5,6 +5,7 @@ import { MatchedMarket, useSportsArbitrageV2, SportType } from '@/hooks/useSport
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TradePlanCard } from '@/components/sports-v2/TradePlanCard';
 import { FiltersPanel } from '@/components/sports-v2/FiltersPanel';
+import { DiagnosticsPanel } from '@/components/sports-v2/DiagnosticsPanel';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -112,6 +113,8 @@ export default function SportsArbitrageV2Page() {
     updateSettings,
     searchQuery,
     setSearchQuery,
+    diagnostics,
+    clearDiagnostics,
   } = useSportsArbitrageV2();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -285,6 +288,9 @@ export default function SportsArbitrageV2Page() {
             <span className="font-bold text-primary">{tradePlans.length}</span>
           </div>
         </section>
+
+        {/* API Diagnostics Panel */}
+        <DiagnosticsPanel diagnostics={diagnostics} onClear={clearDiagnostics} />
 
         {/* Error */}
         {error && (

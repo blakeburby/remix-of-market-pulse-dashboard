@@ -84,6 +84,19 @@ export interface TradePlan {
   timestamp: number;
 }
 
+export interface DiagnosticEntry {
+  id: string;
+  timestamp: number;
+  type: 'matching-markets' | 'kalshi-price' | 'polymarket-price';
+  url: string;
+  status: number | null;
+  durationMs: number;
+  ok: boolean;
+  error?: string;
+  /** Market ticker for per-market calls */
+  ticker?: string;
+}
+
 interface Settings {
   freshnessWindowSeconds: number;
   minEdgePercent: number;
@@ -117,6 +130,8 @@ export interface UseSportsArbitrageV2Result {
   updateSettings: (updates: Partial<Settings>) => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+  diagnostics: DiagnosticEntry[];
+  clearDiagnostics: () => void;
 }
 
 function parseTeamsFromTitle(title: string): { a: string; b: string } | null {
@@ -145,6 +160,16 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [searchQuery, setSearchQuery] = useState('');
+  const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
+
+  const addDiagnostic = useCallback((entry: Omit<DiagnosticEntry, 'id' | 'timestamp'>) => {
+    setDiagnostics((prev) => [
+      { ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, timestamp: Date.now() },
+      ...prev,
+    ].slice(0, 100)); // keep max 100 entries
+  }, []);
+
+  const clearDiagnostics = useCallback(() => setDiagnostics([]), []);
 
   const updateSettings = useCallback((updates: Partial<Settings>) => {
     setSettings((prev) => ({ ...prev, ...updates }));
@@ -165,17 +190,27 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   }, [markets, settings.freshnessWindowSeconds]);
 
   const fetchKalshiMarketInfo = useCallback(async (marketTicker: string, apiKey: string) => {
+    const safeTicker = encodeURIComponent(marketTicker);
+    const url = `https://api.domeapi.io/v1/kalshi/markets?market_ticker=${safeTicker}&limit=1`;
+    const startTime = Date.now();
+
     try {
-      const safeTicker = encodeURIComponent(marketTicker);
-      const resp = await fetch(
-        `https://api.domeapi.io/v1/kalshi/markets?market_ticker=${safeTicker}&limit=1`,
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      const resp = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      addDiagnostic({
+        type: 'kalshi-price',
+        url,
+        status: resp.status,
+        durationMs: Date.now() - startTime,
+        ok: resp.ok,
+        ticker: marketTicker,
+        error: resp.ok ? undefined : `HTTP ${resp.status}`,
+      });
 
       if (!resp.ok) return null;
       const json = await resp.json();
@@ -187,28 +222,44 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         title: typeof m.title === 'string' ? m.title : null,
         closeTimeMs: msFromSeconds(m.close_time ?? m.closeTime ?? m.end_time ?? m.endTime),
       };
-    } catch {
+    } catch (e) {
+      addDiagnostic({
+        type: 'kalshi-price',
+        url,
+        status: null,
+        durationMs: Date.now() - startTime,
+        ok: false,
+        ticker: marketTicker,
+        error: e instanceof Error ? e.message : 'Unknown error',
+      });
       return null;
     }
-  }, []);
+  }, [addDiagnostic]);
 
   const fetchKalshiOutcome = useCallback(async (marketTicker: string, apiKey: string) => {
     const safeTicker = encodeURIComponent(marketTicker);
+    const nowMs = Date.now();
+    const startMs = nowMs - 60 * 60 * 1000; // last hour
+    const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startMs}&end_time=${nowMs}&limit=1`;
+    const startTime = Date.now();
 
-    // Orderbooks endpoint expects epoch milliseconds
     try {
-      const nowMs = Date.now();
-      const startMs = nowMs - 60 * 60 * 1000; // last hour
+      const resp = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-      const resp = await fetch(
-        `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startMs}&end_time=${nowMs}&limit=1`,
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      addDiagnostic({
+        type: 'kalshi-price',
+        url,
+        status: resp.status,
+        durationMs: Date.now() - startTime,
+        ok: resp.ok,
+        ticker: marketTicker,
+        error: resp.ok ? undefined : `HTTP ${resp.status}`,
+      });
 
       if (!resp.ok) return null;
       const json = await resp.json();
@@ -247,23 +298,56 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         depth: Number.isFinite(depthDollars) ? depthDollars : null,
         updatedAt: Date.now(),
       };
-    } catch {
+    } catch (e) {
+      addDiagnostic({
+        type: 'kalshi-price',
+        url,
+        status: null,
+        durationMs: Date.now() - startTime,
+        ok: false,
+        ticker: marketTicker,
+        error: e instanceof Error ? e.message : 'Unknown error',
+      });
       return null;
     }
-  }, []);
+  }, [addDiagnostic]);
 
   const fetchPolymarketOutcomes = useCallback(async (tokenIds: string[], apiKey: string) => {
     if (tokenIds.length < 2) return null;
 
+    const urlA = `https://api.domeapi.io/v1/polymarket/market-price/${tokenIds[0]}`;
+    const urlB = `https://api.domeapi.io/v1/polymarket/market-price/${tokenIds[1]}`;
+
+    const startTime = Date.now();
+
     try {
       const [aResp, bResp] = await Promise.all([
-        fetch(`https://api.domeapi.io/v1/polymarket/market-price/${tokenIds[0]}`, {
+        fetch(urlA, {
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         }),
-        fetch(`https://api.domeapi.io/v1/polymarket/market-price/${tokenIds[1]}`, {
+        fetch(urlB, {
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         }),
       ]);
+
+      addDiagnostic({
+        type: 'polymarket-price',
+        url: urlA,
+        status: aResp.status,
+        durationMs: Date.now() - startTime,
+        ok: aResp.ok,
+        ticker: tokenIds[0],
+        error: aResp.ok ? undefined : `HTTP ${aResp.status}`,
+      });
+      addDiagnostic({
+        type: 'polymarket-price',
+        url: urlB,
+        status: bResp.status,
+        durationMs: Date.now() - startTime,
+        ok: bResp.ok,
+        ticker: tokenIds[1],
+        error: bResp.ok ? undefined : `HTTP ${bResp.status}`,
+      });
 
       if (!aResp.ok || !bResp.ok) return null;
       const aData = await aResp.json();
@@ -279,10 +363,19 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         depth: 1000,
         updatedAt: atTimeMs,
       };
-    } catch {
+    } catch (e) {
+      addDiagnostic({
+        type: 'polymarket-price',
+        url: urlA,
+        status: null,
+        durationMs: Date.now() - startTime,
+        ok: false,
+        ticker: tokenIds.join(','),
+        error: e instanceof Error ? e.message : 'Unknown error',
+      });
       return null;
     }
-  }, []);
+  }, [addDiagnostic]);
 
   const fetchMatchingMarkets = useCallback(async () => {
     const apiKey = getApiKey();
@@ -292,33 +385,44 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     }
 
     const dateStr = format(date, 'yyyy-MM-dd');
+    const url = `https://api.domeapi.io/v1/matching-markets/sports/${sport}?date=${dateStr}`;
 
     console.info('[SportsV2] Fetch matching markets', { sport, date: dateStr });
 
+    const startTime = Date.now();
+    let status: number | null = null;
+    let ok = false;
+    let errorMsg: string | undefined;
+
     try {
-      const response = await fetch(
-        `https://api.domeapi.io/v1/matching-markets/sports/${sport}?date=${dateStr}`,
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      status = response.status;
+      ok = response.ok;
 
       if (response.status === 404) {
-        setError(`No sports contracts found for ${dateStr}. Try a different date.`);
+        errorMsg = `No sports contracts found for ${dateStr}`;
+        setError(`${errorMsg}. Try a different date.`);
+        addDiagnostic({ type: 'matching-markets', url, status, durationMs: Date.now() - startTime, ok: false, error: errorMsg });
         return [];
       }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        setError(errorData?.message || `API error: HTTP ${response.status}`);
+        errorMsg = errorData?.message || `API error: HTTP ${response.status}`;
+        setError(errorMsg);
+        addDiagnostic({ type: 'matching-markets', url, status, durationMs: Date.now() - startTime, ok: false, error: errorMsg });
         return [];
       }
 
       const data = await response.json();
       const marketsData = data?.markets || {};
+      addDiagnostic({ type: 'matching-markets', url, status, durationMs: Date.now() - startTime, ok: true });
 
       const result: MatchedMarket[] = [];
       for (const [, platformsArray] of Object.entries(marketsData)) {
@@ -364,10 +468,12 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       return result;
     } catch (err) {
       console.error('[SportsV2] Failed to fetch matching markets', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch markets');
+      const errStr = err instanceof Error ? err.message : 'Failed to fetch markets';
+      setError(errStr);
+      addDiagnostic({ type: 'matching-markets', url, status, durationMs: Date.now() - startTime, ok: false, error: errStr });
       return [];
     }
-  }, [getApiKey, sport, date]);
+  }, [getApiKey, sport, date, addDiagnostic]);
 
   const fetchPrices = useCallback(
     async (marketsToPrice: MatchedMarket[]): Promise<MatchedMarket[]> => {
@@ -628,5 +734,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     updateSettings,
     searchQuery,
     setSearchQuery,
+    diagnostics,
+    clearDiagnostics,
   };
 }
