@@ -162,8 +162,15 @@ export default function SportsArbitrageV2Page() {
             </div>
           </div>
 
-          {/* Status Badge */}
-          <div className="flex items-center gap-2">
+          {/* Status Badges */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Auto-refresh indicator */}
+            {settings.autoRefreshEnabled && (
+              <Badge variant="outline" className="gap-1.5 border-primary text-primary animate-pulse">
+                <RefreshCw className="w-3 h-3" />
+                Auto {settings.autoRefreshIntervalSeconds}s
+              </Badge>
+            )}
             <Badge
               variant="outline"
               className={cn(
