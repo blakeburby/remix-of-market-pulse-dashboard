@@ -122,6 +122,7 @@ interface Settings {
   autoRefreshEnabled: boolean;
   autoRefreshIntervalSeconds: number;
   apiTier: DomeTier;
+  wsEnabled: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -133,6 +134,7 @@ const DEFAULT_SETTINGS: Settings = {
   autoRefreshEnabled: true,
   autoRefreshIntervalSeconds: 15,
   apiTier: 'dev',
+  wsEnabled: true,
 };
 
 export interface UseSportsArbitrageV2Result {

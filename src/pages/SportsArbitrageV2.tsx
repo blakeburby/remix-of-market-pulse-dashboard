@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSportsArbitrageV2, SportType } from '@/hooks/useSportsArbitrageV2';
+import { useDomeWebSocketV2, DomeWSOrderEvent } from '@/hooks/useDomeWebSocketV2';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TradePlanCard } from '@/components/sports-v2/TradePlanCard';
 import { MarketCard } from '@/components/sports-v2/MarketCard';
 import { FiltersPanel } from '@/components/sports-v2/FiltersPanel';
 import { DiagnosticsPanel } from '@/components/sports-v2/DiagnosticsPanel';
+import { WebSocketPanel } from '@/components/sports-v2/WebSocketPanel';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +18,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import {
   AlertCircle,
@@ -25,15 +26,16 @@ import {
   Info,
   LayoutGrid,
   List,
+  Radio,
   RefreshCw,
   Search,
   Shield,
   Trophy,
-  TrendingUp,
   Zap,
   ZapOff,
 } from 'lucide-react';
 import { addDays, format, startOfToday, subDays } from 'date-fns';
+import { toast } from 'sonner';
 
 const SPORT_LABELS: Record<SportType, string> = {
   nfl: 'NFL',
@@ -93,6 +95,39 @@ export default function SportsArbitrageV2Page() {
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'compact'>('grid');
+
+  // Extract market slugs for WebSocket subscription
+  const marketSlugs = useMemo(() => {
+    return markets
+      .filter(m => m.polymarket?.market_slug)
+      .map(m => m.polymarket!.market_slug);
+  }, [markets]);
+
+  // Handle order events from WebSocket
+  const handleOrderEvent = useCallback((event: DomeWSOrderEvent) => {
+    console.log('[SportsV2] Order event received:', event.data.market_slug);
+    // Trigger a soft refresh when we see activity on a subscribed market
+    if (!isLoading && !isFetchingPrices) {
+      toast.info(`Trade detected: ${event.data.side} ${event.data.shares_normalized?.toFixed(1)} @ ${(event.data.price * 100).toFixed(0)}¢`, {
+        duration: 3000,
+      });
+    }
+  }, [isLoading, isFetchingPrices]);
+
+  // WebSocket connection
+  const {
+    isConnected: wsConnected,
+    isConnecting: wsConnecting,
+    subscriptionCount: wsSubscriptionCount,
+    recentOrders: wsRecentOrders,
+    lastEventTime: wsLastEventTime,
+    connect: wsConnect,
+    disconnect: wsDisconnect,
+  } = useDomeWebSocketV2({
+    marketSlugs,
+    enabled: settings.wsEnabled && marketSlugs.length > 0,
+    onOrderEvent: handleOrderEvent,
+  });
 
   useEffect(() => {
     document.title = 'Locked Sports Arbitrage Scanner V2 | Burby Capital';
@@ -155,6 +190,19 @@ export default function SportsArbitrageV2Page() {
               <Badge variant="outline" className="gap-1.5 border-primary text-primary animate-pulse">
                 <RefreshCw className="w-3 h-3" />
                 Auto {settings.autoRefreshIntervalSeconds}s
+              </Badge>
+            )}
+            {/* WebSocket indicator */}
+            {settings.wsEnabled && (
+              <Badge 
+                variant="outline" 
+                className={cn(
+                  'gap-1.5',
+                  wsConnected ? 'border-chart-2 text-chart-2' : 'border-muted-foreground text-muted-foreground'
+                )}
+              >
+                <Radio className="w-3 h-3" />
+                {wsConnected ? 'WS Live' : wsConnecting ? 'WS...' : 'WS Off'}
               </Badge>
             )}
             <Badge
@@ -281,6 +329,19 @@ export default function SportsArbitrageV2Page() {
             <span className="font-bold text-primary">{tradePlans.length}</span>
           </div>
         </section>
+
+        {/* WebSocket Panel */}
+        <WebSocketPanel
+          isConnected={wsConnected}
+          isConnecting={wsConnecting}
+          subscriptionCount={wsSubscriptionCount}
+          recentOrders={wsRecentOrders}
+          lastEventTime={wsLastEventTime}
+          wsEnabled={settings.wsEnabled}
+          onToggle={(enabled) => updateSettings({ wsEnabled: enabled })}
+          onConnect={wsConnect}
+          onDisconnect={wsDisconnect}
+        />
 
         {/* API Diagnostics Panel */}
         <DiagnosticsPanel diagnostics={diagnostics} onClear={clearDiagnostics} rateLimiterStats={rateLimiterStats} />
