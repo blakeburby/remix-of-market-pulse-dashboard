@@ -84,6 +84,11 @@ export function DiagnosticsPanel({ diagnostics, onClear }: DiagnosticsPanelProps
                 {lastMatchingMarkets.error && (
                   <p className="text-destructive">{lastMatchingMarkets.error}</p>
                 )}
+                {lastMatchingMarkets.responseSnippet && (
+                  <p className="text-destructive/80 text-[10px] break-all mt-1">
+                    Response: {lastMatchingMarkets.responseSnippet}
+                  </p>
+                )}
               </div>
             )}
 
@@ -132,6 +137,11 @@ export function DiagnosticsPanel({ diagnostics, onClear }: DiagnosticsPanelProps
                         <p className="text-muted-foreground">Ticker: {entry.ticker}</p>
                       )}
                       {entry.error && <p className="text-destructive">{entry.error}</p>}
+                      {entry.responseSnippet && (
+                        <p className="text-destructive/80 text-[10px] break-all">
+                          Response: {entry.responseSnippet}
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}
