@@ -4,7 +4,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Settings2, RefreshCw, Zap, AlertTriangle } from 'lucide-react';
+import { Settings2, RefreshCw, Zap, AlertTriangle, Radio } from 'lucide-react';
 import { DomeTier, TIER_LIMITS } from '@/types/dome';
 
 interface Settings {
@@ -16,6 +16,7 @@ interface Settings {
   autoRefreshEnabled: boolean;
   autoRefreshIntervalSeconds: number;
   apiTier: DomeTier;
+  wsEnabled: boolean;
 }
 
 interface FiltersPanelProps {
@@ -65,6 +66,28 @@ export function FiltersPanel({ settings, onUpdate }: FiltersPanelProps) {
               Limits: {tierLimits.qps} QPS / {tierLimits.qp10s} per 10s
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* WebSocket Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Radio className="w-4 h-4" />
+            Real-Time Stream
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">WebSocket Enabled</Label>
+            <Switch
+              checked={settings.wsEnabled}
+              onCheckedChange={(v) => onUpdate({ wsEnabled: v })}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Connects to Dome WebSocket for live order updates
+          </p>
         </CardContent>
       </Card>
 
