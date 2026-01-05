@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -205,11 +205,15 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   const [searchQuery, setSearchQuery] = useState('');
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
 
-  // Subscribe to rate limiter stats for UI updates
-  const rateLimiterStats = useSyncExternalStore(
-    (callback) => globalRateLimiter.subscribe(callback),
-    () => globalRateLimiter.getStats()
-  );
+  // Rate limiter stats with manual subscription (avoids useSyncExternalStore infinite loop)
+  const [rateLimiterStats, setRateLimiterStats] = useState<RateLimiterStats>(() => globalRateLimiter.getStats());
+
+  useEffect(() => {
+    const unsubscribe = globalRateLimiter.subscribe(() => {
+      setRateLimiterStats(globalRateLimiter.getStats());
+    });
+    return unsubscribe;
+  }, []);
 
   const addDiagnostic = useCallback((entry: Omit<DiagnosticEntry, 'id' | 'timestamp'>) => {
     setDiagnostics((prev) => [
