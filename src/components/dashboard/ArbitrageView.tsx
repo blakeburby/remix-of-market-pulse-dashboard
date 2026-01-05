@@ -543,10 +543,9 @@ export function ArbitrageView() {
   }, [settings.autoRefreshEnabled, settings.autoRefreshIntervalSeconds, matches.length, refreshAllMatchedPrices]);
 
   // Filter and sort opportunities
+  // NOTE: Always show ALL opportunities (fresh + stale) - they never disappear
   const displayOpportunities = useMemo(() => {
-    let all = settings.showStaleOpportunities 
-      ? [...freshOpportunities, ...staleOpportunities]
-      : freshOpportunities;
+    let all = [...freshOpportunities, ...staleOpportunities];
     
     // Apply search filter
     if (searchQuery.trim()) {
@@ -580,7 +579,7 @@ export function ArbitrageView() {
       default:
         return all;
     }
-  }, [freshOpportunities, staleOpportunities, settings.showStaleOpportunities, sortBy, searchQuery]);
+  }, [freshOpportunities, staleOpportunities, sortBy, searchQuery]);
   
   // Track which opportunities are stale for badge display
   const staleIds = useMemo(() => new Set(staleOpportunities.map(o => o.id)), [staleOpportunities]);
@@ -669,9 +668,9 @@ export function ArbitrageView() {
               >
                 <Filter className="w-3.5 h-3.5 mr-1.5" />
                 Filters
-                {(settings.minProfitPercent > 0 || settings.showStaleOpportunities) && (
+                {settings.minProfitPercent > 0 && (
                   <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-chart-4/20 text-chart-4">
-                    {(settings.minProfitPercent > 0 ? 1 : 0) + (settings.showStaleOpportunities ? 1 : 0)}
+                    1
                   </Badge>
                 )}
               </Button>
