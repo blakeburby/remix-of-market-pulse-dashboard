@@ -87,7 +87,7 @@ export interface TradePlan {
 export interface DiagnosticEntry {
   id: string;
   timestamp: number;
-  type: 'matching-markets' | 'kalshi-price' | 'kalshi-market' | 'polymarket-price' | 'polymarket-orderbook';
+  type: 'matching-markets' | 'kalshi-price' | 'kalshi-price-retry' | 'kalshi-market' | 'polymarket-price' | 'polymarket-orderbook';
   url: string;
   status: number | null;
   durationMs: number;
@@ -96,6 +96,13 @@ export interface DiagnosticEntry {
   responseSnippet?: string;
   /** Market ticker for per-market calls */
   ticker?: string;
+  /** Parsed query params for debugging */
+  parsedParams?: {
+    start_time?: number;
+    end_time?: number;
+    start_time_unit?: 'seconds' | 'milliseconds';
+    end_time_unit?: 'seconds' | 'milliseconds';
+  };
 }
 
 interface Settings {
@@ -164,6 +171,18 @@ function truncate(str: string, maxLen: number): string {
   return str.slice(0, maxLen) + '…';
 }
 
+/**
+ * Normalize any timestamp to milliseconds.
+ * - If < 1e12, treat as seconds → multiply by 1000
+ * - If > 1e14, treat as microseconds → divide by 1000
+ * - Else treat as milliseconds
+ */
+function toMs(ts: number): number {
+  if (ts < 1e12) return Math.floor(ts * 1000);
+  if (ts > 1e14) return Math.floor(ts / 1000);
+  return Math.floor(ts);
+}
+
 export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
   const { getApiKey } = useAuth();
   const [sport, setSport] = useState<SportType>('nfl');
@@ -204,6 +223,32 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     });
   }, [markets, settings.freshnessWindowSeconds]);
 
+  // Helper to parse timestamp params from URL for diagnostics
+  const parseTimestampParams = (url: string): DiagnosticEntry['parsedParams'] => {
+    try {
+      const urlObj = new URL(url);
+      const startTime = urlObj.searchParams.get('start_time');
+      const endTime = urlObj.searchParams.get('end_time');
+      
+      const result: DiagnosticEntry['parsedParams'] = {};
+      
+      if (startTime) {
+        const num = parseInt(startTime, 10);
+        result.start_time = num;
+        result.start_time_unit = num < 1e12 ? 'seconds' : 'milliseconds';
+      }
+      if (endTime) {
+        const num = parseInt(endTime, 10);
+        result.end_time = num;
+        result.end_time_unit = num < 1e12 ? 'seconds' : 'milliseconds';
+      }
+      
+      return Object.keys(result).length > 0 ? result : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   // Helper to fetch with diagnostics
   const fetchWithDiagnostics = useCallback(
     async (
@@ -213,6 +258,8 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       ticker?: string
     ): Promise<{ resp: Response | null; json: any; error?: string; responseSnippet?: string }> => {
       const startTime = Date.now();
+      const parsedParams = parseTimestampParams(url);
+      
       try {
         const resp = await fetch(url, {
           headers: {
@@ -240,6 +287,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
           ticker,
           error: resp.ok ? undefined : `HTTP ${resp.status}`,
           responseSnippet,
+          parsedParams,
         });
 
         return { resp, json, responseSnippet };
@@ -253,6 +301,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
           ok: false,
           ticker,
           error: errMsg,
+          parsedParams,
         });
         return { resp: null, json: null, error: errMsg };
       }
@@ -299,7 +348,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
     [fetchWithDiagnostics]
   );
 
-  // Fetch Kalshi orderbook, fallback to market bid/ask or last_price if orderbook empty
+  // Fetch Kalshi orderbook with retry logic and fallback to market bid/ask
   const fetchKalshiPrices = useCallback(
     async (
       marketTicker: string,
@@ -315,28 +364,40 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       } | null
     ) => {
       const safeTicker = encodeURIComponent(marketTicker);
-      const nowMs = Date.now();
-      const startMs = nowMs - 30 * 24 * 60 * 60 * 1000; // last 30 days
-      const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${startMs}&end_time=${nowMs}&limit=20`;
+      const nowMs = toMs(Date.now());
+      const startMs = toMs(nowMs - 30 * 24 * 60 * 60 * 1000); // last 30 days, normalized
 
-      const { resp, json, responseSnippet } = await fetchWithDiagnostics(url, 'kalshi-price', apiKey, marketTicker);
+      // Helper to attempt orderbook fetch
+      const attemptOrderbook = async (
+        start: number,
+        end: number,
+        isRetry: boolean
+      ): Promise<{ resp: Response | null; json: any; responseSnippet?: string }> => {
+        const url = `https://api.domeapi.io/v1/kalshi/orderbooks?ticker=${safeTicker}&start_time=${start}&end_time=${end}&limit=20`;
+        return fetchWithDiagnostics(
+          url,
+          isRetry ? 'kalshi-price-retry' : 'kalshi-price',
+          apiKey,
+          marketTicker
+        );
+      };
 
-      if (!resp?.ok || !json) {
-        return {
-          yesAsk: null,
-          noAsk: null,
-          yesBid: null,
-          noBid: null,
-          depth: null,
-          updatedAt: null,
-          error: responseSnippet || 'Failed to fetch orderbook',
-        };
+      // First attempt with normalized ms timestamps
+      let { resp, json, responseSnippet } = await attemptOrderbook(startMs, nowMs, false);
+
+      // Retry if we got a 400 with timestamp error message
+      if (resp?.status === 400 && responseSnippet?.includes('timestamp in milliseconds')) {
+        // Force ensure milliseconds (double-check normalization)
+        const forcedNowMs = toMs(Date.now());
+        const forcedStartMs = toMs(forcedNowMs - 30 * 24 * 60 * 60 * 1000);
+        const retryResult = await attemptOrderbook(forcedStartMs, forcedNowMs, true);
+        resp = retryResult.resp;
+        json = retryResult.json;
+        responseSnippet = retryResult.responseSnippet;
       }
 
-      const snapshots = Array.isArray(json?.snapshots) ? json.snapshots : [];
-
-      if (snapshots.length === 0) {
-        // Fallback: /markets often has bid/ask even when last_price is 0
+      // Helper to use market info as fallback
+      const useMarketFallback = async (reason: string) => {
         const info = marketInfo ?? (await fetchKalshiMarketInfo(marketTicker, apiKey));
 
         const yesBid =
@@ -357,11 +418,11 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
             noAsk: derivedNoAsk,
             yesBid,
             noBid,
-            depth: 0, // unknown
+            depth: 0,
             updatedAt: Date.now(),
             title: info?.title ?? null,
             closeTimeMs: info?.closeTimeMs ?? null,
-            error: 'Using market bid/ask (no orderbook)',
+            error: `${reason} - using market bid/ask`,
           };
         }
 
@@ -373,13 +434,14 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
             noAsk: noMid,
             yesBid: yesMid,
             noBid: noMid,
-            depth: 0, // unknown
+            depth: 0,
             updatedAt: Date.now(),
-            title: info.title,
-            closeTimeMs: info.closeTimeMs,
-            error: 'Using last_price (no orderbook)',
+            title: info?.title ?? null,
+            closeTimeMs: info?.closeTimeMs ?? null,
+            error: `${reason} - using last_price`,
           };
         }
+
         return {
           yesAsk: null,
           noAsk: null,
@@ -387,10 +449,22 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
           noBid: null,
           depth: null,
           updatedAt: null,
-          error: 'No orderbook and no market bid/ask',
+          error: `${reason} - no market bid/ask or last_price`,
         };
+      };
+
+      // If orderbook request failed, try market fallback
+      if (!resp?.ok || !json) {
+        return useMarketFallback(responseSnippet || 'Orderbook request failed');
       }
 
+      const snapshots = Array.isArray(json?.snapshots) ? json.snapshots : [];
+
+      if (snapshots.length === 0) {
+        return useMarketFallback('No orderbook snapshots');
+      }
+
+      // Find latest snapshot
       const latest = (snapshots as any[]).reduce((best: any, s: any) => {
         const t =
           (typeof s?.timestamp === 'number' ? s.timestamp : null) ??
@@ -410,22 +484,39 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
         (typeof latest?.timestamp === 'number' ? latest.timestamp : null) ??
         (typeof latest?.ts === 'number' ? latest.ts : null);
 
-      const latestTsMs =
-        typeof latestTsRaw === 'number'
-          ? latestTsRaw < 1e12
-            ? latestTsRaw * 1000
-            : latestTsRaw
-          : Date.now();
+      const latestTsMs = typeof latestTsRaw === 'number' ? toMs(latestTsRaw) : Date.now();
 
       const orderbook = latest?.orderbook;
 
-      const yesOrders: Array<[number, number]> = Array.isArray(orderbook?.yes) ? orderbook.yes : [];
-      const noOrders: Array<[number, number]> = Array.isArray(orderbook?.no) ? orderbook.no : [];
+      // Parse orderbook - handle both tuple [price, qty] and object { price, quantity } formats
+      const parseOrders = (orders: any[]): Array<[number, number]> => {
+        if (!Array.isArray(orders)) return [];
+        return orders.map((o) => {
+          if (Array.isArray(o)) return [o[0], o[1]] as [number, number];
+          if (typeof o === 'object' && o !== null) {
+            const price = o.price ?? o.priceCents ?? 0;
+            const qty = o.quantity ?? o.qty ?? o.size ?? 0;
+            return [price, qty] as [number, number];
+          }
+          return [0, 0] as [number, number];
+        });
+      };
 
-      const yesBidCents = yesOrders.length ? Math.max(...yesOrders.map((o) => o[0])) : null;
-      const noBidCents = noOrders.length ? Math.max(...noOrders.map((o) => o[0])) : null;
+      const yesOrders = parseOrders(orderbook?.yes);
+      const noOrders = parseOrders(orderbook?.no);
 
-      // Best executable YES/NO ask can be derived from the opposite side best bid (complement pricing)
+      let yesBidCents = yesOrders.length ? Math.max(...yesOrders.map((o) => o[0])) : null;
+      let noBidCents = noOrders.length ? Math.max(...noOrders.map((o) => o[0])) : null;
+
+      // Sanity check: if price looks like dollars (0 < p < 1), convert to cents
+      if (yesBidCents !== null && yesBidCents > 0 && yesBidCents < 1) {
+        yesBidCents = yesBidCents * 100;
+      }
+      if (noBidCents !== null && noBidCents > 0 && noBidCents < 1) {
+        noBidCents = noBidCents * 100;
+      }
+
+      // Best executable YES/NO ask derived from opposite side best bid (complement pricing)
       const yesAskCents = typeof noBidCents === 'number' ? 100 - noBidCents : null;
       const noAskCents = typeof yesBidCents === 'number' ? 100 - yesBidCents : null;
 
@@ -434,7 +525,7 @@ export function useSportsArbitrageV2(): UseSportsArbitrageV2Result {
       const noBidQty =
         typeof noBidCents === 'number' ? (noOrders.find((o) => o[0] === noBidCents)?.[1] ?? 0) : 0;
 
-      const depthDollars = Math.min(yesBidQty, noBidQty) / 100; // best-effort
+      const depthDollars = Math.min(yesBidQty, noBidQty) / 100;
 
       return {
         yesBid: typeof yesBidCents === 'number' ? yesBidCents / 100 : null,
