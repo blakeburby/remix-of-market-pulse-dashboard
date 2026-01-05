@@ -9,6 +9,9 @@ import { cn } from '@/lib/utils';
 import { Activity, ChevronDown, ChevronUp, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { format } from 'date-fns';
 
+// Build stamp for cache debugging
+const BUILD_STAMP = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
 interface DiagnosticsPanelProps {
   diagnostics: DiagnosticEntry[];
   onClear: () => void;
@@ -45,6 +48,9 @@ export function DiagnosticsPanel({ diagnostics, onClear }: DiagnosticsPanelProps
                     {errorCount} errors
                   </Badge>
                 )}
+                <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                  Build: {BUILD_STAMP}
+                </Badge>
               </div>
               <div className="flex items-center gap-2">
                 {lastMatchingMarkets && (
@@ -135,6 +141,20 @@ export function DiagnosticsPanel({ diagnostics, onClear }: DiagnosticsPanelProps
                       <p className="text-muted-foreground truncate">{entry.url}</p>
                       {entry.ticker && (
                         <p className="text-muted-foreground">Ticker: {entry.ticker}</p>
+                      )}
+                      {entry.parsedParams && (
+                        <div className="text-muted-foreground text-[10px] space-x-2">
+                          {entry.parsedParams.start_time && (
+                            <span>
+                              start_time: {entry.parsedParams.start_time} ({entry.parsedParams.start_time_unit})
+                            </span>
+                          )}
+                          {entry.parsedParams.end_time && (
+                            <span>
+                              end_time: {entry.parsedParams.end_time} ({entry.parsedParams.end_time_unit})
+                            </span>
+                          )}
+                        </div>
                       )}
                       {entry.error && <p className="text-destructive">{entry.error}</p>}
                       {entry.responseSnippet && (
