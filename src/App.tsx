@@ -7,12 +7,8 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { MarketsProvider } from "@/contexts/MarketsContext";
 import LoginPage from "./pages/Login";
 import DashboardPage from "./pages/Dashboard";
-import SportsArbitragePage from "./pages/SportsArbitrage";
-import SportsArbitrageV2Page from "./pages/SportsArbitrageV2";
 import TradeCalculatorPage from "./pages/TradeCalculator";
 import NotFound from "./pages/NotFound";
-
-// Force rebuild v2
 
 const queryClient = new QueryClient();
 
@@ -21,8 +17,6 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<LoginPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
-      <Route path="/sports" element={<SportsArbitragePage />} />
-      <Route path="/sports-v2" element={<SportsArbitrageV2Page />} />
       <Route path="/calculator" element={<TradeCalculatorPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
