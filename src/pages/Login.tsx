@@ -11,7 +11,7 @@ import { DomeTier } from '@/types/dome';
 import { Loader2, KeyRound, Building2, Shield, Zap, BarChart3 } from 'lucide-react';
 
 export default function LoginPage() {
-  const [apiKey, setApiKey] = useState('');
+  const [apiKey, setApiKey] = useState('e48cf9ae71f7b0c891236fd8843e097da5b4089e');
   const [tier, setTier] = useState<DomeTier>('free');
   const [remember, setRemember] = useState(true);
   const { login, isValidating, error, setTier: setAuthTier } = useAuth();
