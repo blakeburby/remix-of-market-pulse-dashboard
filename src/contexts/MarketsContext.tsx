@@ -15,7 +15,7 @@ import {
   DiscoveryStatus,
 } from '@/types/dome';
 import { useAuth } from '@/contexts/AuthContext';
-import { polymarketRateLimiter, kalshiRateLimiter, getCombinedStats } from '@/lib/rate-limiter';
+import { polymarketRateLimiter, kalshiRateLimiter, getCombinedStats, allocateQpsBudget } from '@/lib/rate-limiter';
 import { toast } from '@/hooks/use-toast';
 import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
 
@@ -804,7 +804,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Run discovery for both platforms in parallel
+  // Run discovery for both platforms in parallel with dynamic QPS allocation
   const runDiscovery = useCallback(async () => {
     if (!isDiscoveringRef.current) return;
 
@@ -824,7 +824,43 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       const apiKey = getApiKey();
       if (!apiKey) return;
 
-      // Fetch BOTH platforms in parallel - they update markets continuously now
+      // Phase 1: Probe to get total counts (1 request each with limit=1)
+      const TOTAL_QPS = 100;
+      const PAGE_SIZE = 100;
+      
+      const [polyProbe, kalshiProbe] = await Promise.all([
+        fetch('https://api.domeapi.io/v1/polymarket/markets?status=open&limit=1', {
+          headers: { 'X-Api-Key': apiKey },
+          signal,
+        }),
+        fetch('https://api.domeapi.io/v1/kalshi/markets?status=open&limit=1', {
+          headers: { 'X-Api-Key': apiKey },
+          signal,
+        }),
+      ]);
+
+      if (signal.aborted) return;
+
+      // Get total counts from headers or estimate from known data
+      const polyTotalHeader = polyProbe.headers.get('x-total-count');
+      const kalshiTotalHeader = kalshiProbe.headers.get('x-total-count');
+      
+      // Fallback estimates based on typical market counts
+      const polyTotal = polyTotalHeader ? parseInt(polyTotalHeader, 10) : 4000;
+      const kalshiTotal = kalshiTotalHeader ? parseInt(kalshiTotalHeader, 10) : 14000;
+      
+      const polyPages = Math.ceil(polyTotal / PAGE_SIZE);
+      const kalshiPages = Math.ceil(kalshiTotal / PAGE_SIZE);
+      
+      // Phase 2: Allocate QPS proportionally so both finish at the same time
+      const { polymarketQps, kalshiQps } = allocateQpsBudget(TOTAL_QPS, polyPages, kalshiPages);
+      
+      polymarketRateLimiter.setDynamicQps(polymarketQps);
+      kalshiRateLimiter.setDynamicQps(kalshiQps);
+      
+      console.log(`[Discovery] Allocated QPS - Polymarket: ${polymarketQps} (${polyPages} pages), Kalshi: ${kalshiQps} (${kalshiPages} pages)`);
+
+      // Phase 3: Fetch BOTH platforms in parallel - they update markets continuously now
       const [polymarketMarkets, kalshiMarkets] = await Promise.all([
         fetchPlatformMarkets('POLYMARKET', signal),
         fetchPlatformMarkets('KALSHI', signal),

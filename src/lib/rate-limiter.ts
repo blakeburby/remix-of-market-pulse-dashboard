@@ -41,8 +41,19 @@ export class RateLimiter {
 
   // Set custom QPS limit (overrides tier-based limit)
   setCustomQps(qps: number) {
-    this.customQp10s = qps * 10;
+    this.customQp10s = Math.round(qps * 10);
     this.notifyListeners();
+  }
+
+  // Set QPS dynamically (can be called at runtime) - alias for setCustomQps
+  setDynamicQps(qps: number) {
+    this.customQp10s = Math.round(qps * 10);
+    this.notifyListeners();
+  }
+
+  // Get current effective QPS
+  getEffectiveQps(): number {
+    return this.getQp10s() / 10;
   }
 
   private getQp10s(): number {
@@ -236,4 +247,21 @@ export function getCombinedStats(): { polymarket: RateLimiterStats; kalshi: Rate
     kalshi: kalshiStats,
     totalRpm: polyStats.requestsPerMinute + kalshiStats.requestsPerMinute,
   };
+}
+
+// Allocate total QPS budget between platforms based on their workload
+// Platform with more pages gets more QPS so both finish at approximately the same time
+export function allocateQpsBudget(
+  totalQps: number,
+  polymarketPages: number,
+  kalshiPages: number
+): { polymarketQps: number; kalshiQps: number } {
+  const totalPages = polymarketPages + kalshiPages;
+  if (totalPages === 0) return { polymarketQps: totalQps / 2, kalshiQps: totalQps / 2 };
+  
+  // Allocate QPS proportionally to workload
+  const polymarketQps = Math.max(10, Math.round((polymarketPages / totalPages) * totalQps));
+  const kalshiQps = Math.max(10, totalQps - polymarketQps);
+  
+  return { polymarketQps, kalshiQps };
 }
