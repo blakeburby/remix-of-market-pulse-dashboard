@@ -3,6 +3,13 @@
  * Ensures primary entities (people, orgs, numeric targets) are compatible
  */
 
+import { 
+  isSportsMarket, 
+  areSportsMarketsCompatible, 
+  extractAllTeams, 
+  extractSport 
+} from './sports-matcher';
+
 // Primary political figures - must match if both markets mention politics
 const POLITICAL_FIGURES: Record<string, string[]> = {
   trump: ['trump', 'donald trump', 'donald j trump', 'djt'],
@@ -308,6 +315,45 @@ export function areMutuallyExclusive(titleA: string, titleB: string): boolean {
 }
 
 /**
+ * Validate sports-specific entities
+ */
+export function validateSportsEntities(titleA: string, titleB: string): boolean {
+  const isSportsA = isSportsMarket(titleA);
+  const isSportsB = isSportsMarket(titleB);
+  
+  // If only one is a sports market, they shouldn't match
+  if (isSportsA !== isSportsB) {
+    return false;
+  }
+  
+  // If both are sports markets, validate sports-specific compatibility
+  if (isSportsA && isSportsB) {
+    if (!areSportsMarketsCompatible(titleA, titleB)) {
+      return false;
+    }
+    
+    // Check sport type matches
+    const sportA = extractSport(titleA);
+    const sportB = extractSport(titleB);
+    if (sportA && sportB && sportA !== sportB) {
+      return false;
+    }
+    
+    // Check team compatibility
+    const teamsA = extractAllTeams(titleA);
+    const teamsB = extractAllTeams(titleB);
+    if (teamsA.length > 0 && teamsB.length > 0) {
+      const sharedTeams = teamsA.filter(t => teamsB.includes(t));
+      if (sharedTeams.length === 0) {
+        return false; // Different teams - different games
+      }
+    }
+  }
+  
+  return true;
+}
+
+/**
  * Combined validation - returns true if markets should potentially match
  */
 export function validateMatch(titleA: string, titleB: string): { 
@@ -328,6 +374,11 @@ export function validateMatch(titleA: string, titleB: string): {
   
   if (areMutuallyExclusive(titleA, titleB)) {
     return { valid: false, reason: 'mutually_exclusive' };
+  }
+  
+  // NEW: Sports-specific validation
+  if (!validateSportsEntities(titleA, titleB)) {
+    return { valid: false, reason: 'sports_entity_conflict' };
   }
   
   return { valid: true };

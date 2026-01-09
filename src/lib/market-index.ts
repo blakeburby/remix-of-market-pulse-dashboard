@@ -4,6 +4,7 @@
  */
 
 import { UnifiedMarket } from '@/types/dome';
+import { extractTeam, extractSport, isSportsMarket } from './sports-matcher';
 
 // Normalize and extract indexable terms
 const STOP_WORDS = new Set([
@@ -69,6 +70,10 @@ export interface MarketIndex {
   yearIndex: Map<string, Set<string>>;
   // Ticker -> Set of market IDs
   tickerIndex: Map<string, Set<string>>;
+  // Team -> Set of market IDs (for sports matching)
+  teamIndex: Map<string, Set<string>>;
+  // Sport -> Set of market IDs (for sports matching)
+  sportIndex: Map<string, Set<string>>;
   // Market ID -> Market
   markets: Map<string, UnifiedMarket>;
   // Market ID -> Pre-computed terms
@@ -83,6 +88,8 @@ export function createIndex(): MarketIndex {
     baseEventIndex: new Map(),
     yearIndex: new Map(),
     tickerIndex: new Map(),
+    teamIndex: new Map(),
+    sportIndex: new Map(),
     markets: new Map(),
     marketTerms: new Map(),
     marketBaseTerms: new Map(),
@@ -94,6 +101,8 @@ export function addToIndex(index: MarketIndex, market: UnifiedMarket): void {
   const baseTerms = extractBaseEventTerms(market.title);
   const year = extractYear(market.title);
   const ticker = extractTicker(market.title);
+  const team = extractTeam(market.title);
+  const sport = extractSport(market.title);
   
   index.markets.set(market.id, market);
   index.marketTerms.set(market.id, terms);
@@ -130,9 +139,27 @@ export function addToIndex(index: MarketIndex, market: UnifiedMarket): void {
     }
     index.tickerIndex.get(ticker)!.add(market.id);
   }
+  
+  // Index by team (for sports matching)
+  if (team) {
+    if (!index.teamIndex.has(team)) {
+      index.teamIndex.set(team, new Set());
+    }
+    index.teamIndex.get(team)!.add(market.id);
+  }
+  
+  // Index by sport (for sports matching)
+  if (sport) {
+    if (!index.sportIndex.has(sport)) {
+      index.sportIndex.set(sport, new Set());
+    }
+    index.sportIndex.get(sport)!.add(market.id);
+  }
 }
 
 export function removeFromIndex(index: MarketIndex, marketId: string): void {
+  const market = index.markets.get(marketId);
+  
   const terms = index.marketTerms.get(marketId);
   if (terms) {
     for (const term of terms) {
@@ -145,6 +172,19 @@ export function removeFromIndex(index: MarketIndex, marketId: string): void {
       index.baseEventIndex.get(term)?.delete(marketId);
     }
   }
+  
+  // Clean up team and sport indexes
+  if (market) {
+    const team = extractTeam(market.title);
+    const sport = extractSport(market.title);
+    if (team) {
+      index.teamIndex.get(team)?.delete(marketId);
+    }
+    if (sport) {
+      index.sportIndex.get(sport)?.delete(marketId);
+    }
+  }
+  
   index.markets.delete(marketId);
   index.marketTerms.delete(marketId);
   index.marketBaseTerms.delete(marketId);
@@ -155,6 +195,7 @@ export function removeFromIndex(index: MarketIndex, marketId: string): void {
  * Returns markets that share at least MIN_SHARED_TERMS terms
  * Enhanced: Also searches by base event terms for bracket-market matching
  * STRICTER: Requires minSharedTerms=2 by default
+ * NEW: Also searches by team/sport for sports market matching
  */
 export function findCandidates(
   index: MarketIndex,
@@ -165,12 +206,15 @@ export function findCandidates(
   const baseTerms = extractBaseEventTerms(market.title);
   const year = extractYear(market.title);
   const ticker = extractTicker(market.title);
+  const team = extractTeam(market.title);
+  const sport = extractSport(market.title);
+  const isSports = isSportsMarket(market.title);
   
   // Count how many terms each candidate shares
   const candidateCounts = new Map<string, number>();
   const baseEventCounts = new Map<string, number>();
   
-  // Boost candidates that match year or ticker
+  // Boost candidates that match year, ticker, team, or sport
   const boostedCandidates = new Set<string>();
   
   // Check year matches first (strong signal)
@@ -184,6 +228,23 @@ export function findCandidates(
   if (ticker && index.tickerIndex.has(ticker)) {
     for (const id of index.tickerIndex.get(ticker)!) {
       boostedCandidates.add(id);
+    }
+  }
+  
+  // NEW: Check team matches (strong signal for sports)
+  if (team && index.teamIndex.has(team)) {
+    for (const id of index.teamIndex.get(team)!) {
+      boostedCandidates.add(id);
+    }
+  }
+  
+  // NEW: Check sport matches (moderate signal for sports)
+  if (sport && index.sportIndex.has(sport)) {
+    for (const id of index.sportIndex.get(sport)!) {
+      // Only boost if this is actually a sports market
+      if (isSports) {
+        boostedCandidates.add(id);
+      }
     }
   }
   
