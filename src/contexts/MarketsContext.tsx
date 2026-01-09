@@ -661,17 +661,25 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [tier]);
 
-  // Fetch markets from a single platform with pagination - continuously updates markets
+  // Fetch markets from a single platform with PARALLEL page fetching
+  // Pages are fetched concurrently, controlled only by rate limiter
   const fetchPlatformMarkets = async (
     platform: Platform,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    totalMarkets?: number  // Pass from probe response for parallel fetching
   ): Promise<UnifiedMarket[]> => {
     const apiKey = getApiKey();
     if (!apiKey) return [];
 
-    const allMarkets: UnifiedMarket[] = [];
-    let offset = 0;
     const limit = 100;
+    const rateLimiter = platform === 'POLYMARKET' ? polymarketRateLimiter : kalshiRateLimiter;
+    
+    // Calculate total pages - use known total or estimate
+    const estimatedTotal = totalMarkets ?? (platform === 'POLYMARKET' ? 4000 : 14000);
+    const totalPages = Math.ceil(estimatedTotal / limit);
+    
+    // Generate all page offsets upfront
+    const offsets = Array.from({ length: totalPages }, (_, i) => i * limit);
 
     const baseUrl = platform === 'POLYMARKET'
       ? 'https://api.domeapi.io/v1/polymarket/markets'
@@ -699,75 +707,98 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return base;
     });
 
+    // Collect all markets from parallel fetches
+    const allMarkets: UnifiedMarket[] = [];
+    let pagesCompleted = 0;
+    let hitEmptyPage = false;
+
     try {
-      while (true) {
-        if (signal?.aborted) break;
-
+      // Fetch all pages in parallel, controlled by rate limiter
+      await rateLimiter.acquireStream(offsets.length, async (index) => {
+        if (signal?.aborted || hitEmptyPage) return;
+        
+        const offset = offsets[index];
         const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}`;
-        const response = await rateLimitedFetch(url, apiKey, platform, signal);
+        
+        try {
+          const response = await rateLimitedFetch(url, apiKey, platform, signal);
+          
+          let pageMarkets: UnifiedMarket[] = [];
+          let hasMore = false;
 
-        let pageMarkets: UnifiedMarket[] = [];
-        let hasMore = false;
-
-        if (platform === 'POLYMARKET') {
-          const data: PolymarketMarketsResponse = await response.json();
-          pageMarkets = data.markets.map(convertPolymarketMarket);
-          hasMore = data.pagination.has_more;
-
-          // DON'T warm prices during discovery - wait until matching is done
-          // This saves thousands of API calls for unmatched markets
-        } else {
-          const data = await response.json();
-          pageMarkets = (data.markets || []).map(convertKalshiMarket);
-          // Kalshi API may not include pagination object - infer hasMore from result count
-          hasMore = data.pagination?.has_more ?? (pageMarkets.length === limit);
-        }
-
-        allMarkets.push(...pageMarkets);
-
-        // Update discovery progress
-        setDiscoveryProgress(prev => {
-          if (!prev) return prev;
-          const updated = { ...prev };
           if (platform === 'POLYMARKET') {
-            updated.polymarket = { offset: offset + limit, found: allMarkets.length, hasMore };
+            const data: PolymarketMarketsResponse = await response.json();
+            pageMarkets = data.markets.map(convertPolymarketMarket);
+            hasMore = data.pagination.has_more;
           } else {
-            updated.kalshi = { offset: offset + limit, found: allMarkets.length, hasMore };
+            const data = await response.json();
+            pageMarkets = (data.markets || []).map(convertKalshiMarket);
+            hasMore = data.pagination?.has_more ?? (pageMarkets.length === limit);
           }
-          return updated;
-        });
 
-        // Continuously update markets after each page
-        setMarkets(prev => {
-          const existing = new Map(prev.map(m => [m.id, m]));
-          for (const market of pageMarkets) {
-            const prevMarket = existing.get(market.id);
-            if (prevMarket && prevMarket.platform === platform) {
-              existing.set(market.id, {
-                ...market,
-                sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
-                sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
-                lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
-              });
+          // If we get an empty page, signal to stop further requests
+          if (pageMarkets.length === 0) {
+            hitEmptyPage = true;
+            return;
+          }
+
+          // Thread-safe accumulation
+          allMarkets.push(...pageMarkets);
+          pagesCompleted++;
+
+          // Update discovery progress
+          setDiscoveryProgress(prev => {
+            if (!prev) return prev;
+            const updated = { ...prev };
+            if (platform === 'POLYMARKET') {
+              updated.polymarket = { 
+                offset: pagesCompleted * limit, 
+                found: allMarkets.length, 
+                hasMore: hasMore && !hitEmptyPage 
+              };
             } else {
-              existing.set(market.id, market);
+              updated.kalshi = { 
+                offset: pagesCompleted * limit, 
+                found: allMarkets.length, 
+                hasMore: hasMore && !hitEmptyPage 
+              };
             }
+            return updated;
+          });
+
+          // Continuously update markets after each page
+          setMarkets(prev => {
+            const existing = new Map(prev.map(m => [m.id, m]));
+            for (const market of pageMarkets) {
+              const prevMarket = existing.get(market.id);
+              if (prevMarket && prevMarket.platform === platform) {
+                existing.set(market.id, {
+                  ...market,
+                  sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
+                  sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
+                  lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
+                });
+              } else {
+                existing.set(market.id, market);
+              }
+            }
+            return Array.from(existing.values());
+          });
+
+          console.log(`[Discovery] ${platform}: page=${index + 1}/${totalPages} found=${allMarkets.length}`);
+        } catch (error) {
+          if ((error as Error).message !== 'Aborted') {
+            console.error(`[Discovery] ${platform} page ${index} error:`, error);
           }
-          return Array.from(existing.values());
-        });
-
-        console.log(`[Discovery] ${platform}: offset=${offset} found=${allMarkets.length} hasMore=${hasMore}`);
-
-        if (!hasMore) break;
-        offset += limit;
-      }
+        }
+      });
 
       setSyncState(prev => ({
         ...prev,
         [platform]: {
           ...prev[platform],
           lastFullDiscoveryAt: new Date(),
-          lastOffsetUsed: offset,
+          lastOffsetUsed: pagesCompleted * limit,
           lastError: null,
           lastSuccessAt: new Date(),
           isRunning: false,
@@ -860,10 +891,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       
       console.log(`[Discovery] Allocated QPS - Polymarket: ${polymarketQps} (${polyPages} pages), Kalshi: ${kalshiQps} (${kalshiPages} pages)`);
 
-      // Phase 3: Fetch BOTH platforms in parallel - they update markets continuously now
+      // Phase 3: Fetch BOTH platforms in parallel with known totals for parallel page fetching
       const [polymarketMarkets, kalshiMarkets] = await Promise.all([
-        fetchPlatformMarkets('POLYMARKET', signal),
-        fetchPlatformMarkets('KALSHI', signal),
+        fetchPlatformMarkets('POLYMARKET', signal, polyTotal),
+        fetchPlatformMarkets('KALSHI', signal, kalshiTotal),
       ]);
 
       if (signal.aborted) return;

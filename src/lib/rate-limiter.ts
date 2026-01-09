@@ -131,12 +131,22 @@ export class RateLimiter {
     this.notifyListeners();
   }
 
-  // Stream-based acquisition - fires callback as tokens become available
-  async acquireStream(count: number, onTokenAvailable: (index: number) => void): Promise<void> {
+  // Stream-based acquisition - fires async callbacks as tokens become available
+  // Callbacks run concurrently (don't wait for previous to complete), controlled by rate limit
+  async acquireStream(count: number, onTokenAvailable: (index: number) => Promise<void> | void): Promise<void> {
+    const promises: Promise<void>[] = [];
+    
     for (let i = 0; i < count; i++) {
       await this.waitAndAcquire();
-      onTokenAvailable(i);
+      // Fire callback immediately, don't await - allows concurrent execution
+      const result = onTokenAvailable(i);
+      if (result instanceof Promise) {
+        promises.push(result);
+      }
     }
+    
+    // Wait for all in-flight requests to complete
+    await Promise.allSettled(promises);
   }
 
   // Check if a slot is available right now (non-blocking)
