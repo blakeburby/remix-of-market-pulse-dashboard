@@ -20,6 +20,9 @@ export class RateLimiter {
   private lastRequestTime: number = 0;
   private rateLimitedUntil: number = 0;  // Pause until this timestamp if 429 received
   private listeners: Set<() => void> = new Set();
+  
+  // Custom QPS override (optional)
+  private customQp10s: number | null = null;
 
   constructor(tier: DomeTier = 'free') {
     this.tier = tier;
@@ -28,6 +31,7 @@ export class RateLimiter {
 
   setTier(tier: DomeTier) {
     this.tier = tier;
+    this.customQp10s = null; // Reset custom limits when tier changes
     this.notifyListeners();
   }
 
@@ -35,11 +39,23 @@ export class RateLimiter {
     return this.tier;
   }
 
+  // Set custom QPS limit (overrides tier-based limit)
+  setCustomQps(qps: number) {
+    this.customQp10s = qps * 10;
+    this.notifyListeners();
+  }
+
+  private getQp10s(): number {
+    if (this.customQp10s !== null) {
+      return this.customQp10s;
+    }
+    return TIER_LIMITS[this.tier].qp10s;
+  }
+
   public getIntervalMs(): number {
-    // Use 10-second window limit for pacing
-    const limit = TIER_LIMITS[this.tier];
+    const qp10s = this.getQp10s();
     // Spread requests evenly over 10 seconds
-    return Math.ceil(10000 / limit.qp10s);
+    return Math.ceil(10000 / qp10s);
   }
 
   // Mark rate limited by API - wait the specified duration
@@ -69,7 +85,7 @@ export class RateLimiter {
 
   // Wait for next available slot within rate limit
   async waitAndAcquire(): Promise<void> {
-    const limit = TIER_LIMITS[this.tier];
+    const qp10s = this.getQp10s();
     
     // If we're rate limited by API, wait
     let now = Date.now();
@@ -80,7 +96,7 @@ export class RateLimiter {
     
     // Check sliding window - if at limit, wait for oldest request to expire
     this.cleanupWindow();
-    while (this.requestTimestamps.length >= limit.qp10s) {
+    while (this.requestTimestamps.length >= qp10s) {
       const oldestTimestamp = this.requestTimestamps[0];
       const waitTime = (oldestTimestamp + 10000) - Date.now() + 100; // Wait until it expires + buffer
       if (waitTime > 0) {
@@ -118,8 +134,8 @@ export class RateLimiter {
     if (now < this.rateLimitedUntil) return false;
     
     this.cleanupWindow();
-    const limit = TIER_LIMITS[this.tier];
-    if (this.requestTimestamps.length >= limit.qp10s) return false;
+    const qp10s = this.getQp10s();
+    if (this.requestTimestamps.length >= qp10s) return false;
     
     const intervalMs = this.getIntervalMs();
     const timeSinceLastRequest = now - this.lastRequestTime;
@@ -151,8 +167,8 @@ export class RateLimiter {
 
   getAvailableTokens(): number {
     this.cleanupWindow();
-    const limit = TIER_LIMITS[this.tier];
-    return Math.max(0, limit.qp10s - this.requestTimestamps.length);
+    const qp10s = this.getQp10s();
+    return Math.max(0, qp10s - this.requestTimestamps.length);
   }
 
   // Track a request (for fire-and-forget calls where we still want to count)
@@ -167,13 +183,13 @@ export class RateLimiter {
   // Get stats for UI display
   getStats(): RateLimiterStats {
     this.cleanupWindow();
-    const limit = TIER_LIMITS[this.tier];
+    const qp10s = this.getQp10s();
     return {
       tier: this.tier,
       requestsPerMinute: this.requestTimestamps60s.length,
       requestsIn10s: this.requestTimestamps.length,
-      availableTokens: Math.max(0, limit.qp10s - this.requestTimestamps.length),
-      maxPer10s: limit.qp10s,
+      availableTokens: Math.max(0, qp10s - this.requestTimestamps.length),
+      maxPer10s: qp10s,
       isRateLimited: Date.now() < this.rateLimitedUntil,
       rateLimitedUntil: this.rateLimitedUntil > Date.now() ? this.rateLimitedUntil : null,
     };
@@ -190,5 +206,34 @@ export class RateLimiter {
   }
 }
 
-// Global rate limiter instance - defaults to 'dev' tier based on typical API keys
-export const globalRateLimiter = new RateLimiter('dev');
+// Platform-specific rate limiters - each gets its own pool
+// Default to 'dev' tier, then set custom 50 QPS each
+export const polymarketRateLimiter = new RateLimiter('dev');
+export const kalshiRateLimiter = new RateLimiter('dev');
+
+// Set 50 QPS for each platform (100 total combined)
+polymarketRateLimiter.setCustomQps(50);
+kalshiRateLimiter.setCustomQps(50);
+
+// Legacy global rate limiter - points to polymarket for backward compatibility
+export const globalRateLimiter = polymarketRateLimiter;
+
+// Helper to set tier on all rate limiters
+export function setAllTiers(tier: DomeTier) {
+  polymarketRateLimiter.setTier(tier);
+  kalshiRateLimiter.setTier(tier);
+  // Re-apply custom QPS after tier change
+  polymarketRateLimiter.setCustomQps(50);
+  kalshiRateLimiter.setCustomQps(50);
+}
+
+// Get combined stats from both rate limiters
+export function getCombinedStats(): { polymarket: RateLimiterStats; kalshi: RateLimiterStats; totalRpm: number } {
+  const polyStats = polymarketRateLimiter.getStats();
+  const kalshiStats = kalshiRateLimiter.getStats();
+  return {
+    polymarket: polyStats,
+    kalshi: kalshiStats,
+    totalRpm: polyStats.requestsPerMinute + kalshiStats.requestsPerMinute,
+  };
+}
