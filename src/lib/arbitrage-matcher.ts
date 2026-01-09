@@ -1,6 +1,15 @@
 import { UnifiedMarket, CrossPlatformMatch, ArbitrageOpportunity, Platform } from '@/types/dome';
 import { MarketIndex, buildIndex, findCandidates, addToIndex, createIndex } from './market-index';
 import { validateMatch } from './entity-validator';
+import { 
+  isSportsMarket, 
+  calculateSportsMatchScore, 
+  areSportsMarketsCompatible,
+  extractSport,
+  extractTeam,
+  extractBetType,
+  extractMajorEvent
+} from './sports-matcher';
 
 // ===== Configuration =====
 const TIME_WINDOW_DAYS = 3; // Stricter: markets must end within 3 days of each other
@@ -67,7 +76,19 @@ const TOPIC_CATEGORIES: Record<string, string[]> = {
   economic: ['gdp', 'growth', 'inflation', 'unemployment', 'rate', 'economy', 'fed', 'interest', 'recession', 'cpi', 'pce'],
   political: ['election', 'president', 'congress', 'vote', 'senate', 'house', 'governor', 'mayor', 'trump', 'biden'],
   crypto: ['bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'price', 'token'],
-  sports: ['super bowl', 'nba', 'nfl', 'mlb', 'world series', 'championship', 'finals', 'win', 'winner'],
+  sports: [
+    // Leagues
+    'nba', 'nfl', 'mlb', 'nhl', 'mls', 'ncaa', 'pga', 'atp', 'wta', 'ufc', 'f1', 'formula 1',
+    // Events  
+    'super bowl', 'world series', 'stanley cup', 'finals', 'championship', 
+    'playoff', 'playoffs', 'march madness', 'final four', 'bowl game',
+    // Bet types
+    'moneyline', 'spread', 'over', 'under', 'total', 'cover',
+    // Game terms
+    'game', 'match', 'vs', 'versus', 'beat', 'defeat',
+    // Team sports terms
+    'touchdown', 'field goal', 'home run', 'goal', 'assist', 'rebound',
+  ],
 };
 
 /**
@@ -571,6 +592,14 @@ export function findMatchingMarkets(
       const entityValidation = validateMatch(polymarket.title, kalshi.title);
       if (!entityValidation.valid) continue;
 
+      // Check if this is a sports match
+      const isSportsMatchCandidate = isSportsMarket(polymarket.title) && isSportsMarket(kalshi.title);
+      
+      // For sports markets, do additional compatibility check
+      if (isSportsMatchCandidate && !areSportsMarketsCompatible(polymarket.title, kalshi.title)) {
+        continue;
+      }
+
       // Calculate component scores
       const kalshiTerms = extractKeyTerms(kalshi.title);
       const kalshiEntities = extractEntities(kalshi.title);
@@ -582,12 +611,23 @@ export function findMatchingMarkets(
       const tickerScore = calculateTickerScore(polymarket, kalshi);
       const timeScore = calculateTimeScore(polymarket, kalshi);
       const categoryScore = calculateCategoryScore(polymarket.title, kalshi.title);
+      
+      // NEW: Calculate sports-specific score for sports markets
+      const sportsScore = isSportsMatchCandidate 
+        ? calculateSportsMatchScore(polymarket.title, kalshi.title) 
+        : 0;
 
       // Use the higher of title score or base event score (for bracket markets)
-      const effectiveTitleScore = Math.max(titleScore, baseEventScore);
+      let effectiveTitleScore = Math.max(titleScore, baseEventScore);
+      
+      // For sports markets, also consider sports score
+      if (isSportsMatchCandidate && sportsScore > effectiveTitleScore) {
+        effectiveTitleScore = sportsScore;
+      }
 
       // STRICTER: Remove category-based bypass, require strong title or ticker match
-      if (effectiveTitleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.7) continue;
+      // For sports, also allow strong sports score
+      if (effectiveTitleScore < MIN_TITLE_SIMILARITY && tickerScore < 0.7 && sportsScore < 0.5) continue;
 
       // UPDATED WEIGHTS: Title/Base 35%, Entity 25%, Ticker 15%, Time 10%, Category 10%, Bracket 5%
       let overallScore = 
@@ -597,6 +637,11 @@ export function findMatchingMarkets(
         timeScore * 0.10 +
         categoryScore * 0.10 +
         bracketScore * 0.05;
+      
+      // Sports match bonus
+      if (isSportsMatchCandidate && sportsScore >= 0.6) {
+        overallScore += 0.15; // Significant bonus for strong sports matches
+      }
 
       // REDUCED bonuses
       if (baseEventScore >= 0.75) {
@@ -609,8 +654,23 @@ export function findMatchingMarkets(
 
       if (overallScore >= MIN_OVERALL_SCORE && (!bestMatch || overallScore > bestMatch.score)) {
         const reasons: string[] = [];
-        if (baseEventScore >= 0.6) reasons.push(`base event ${Math.round(baseEventScore * 100)}%`);
-        else if (titleScore >= 0.4) reasons.push(`title ${Math.round(titleScore * 100)}%`);
+        
+        // Add sports-specific reason
+        if (isSportsMatchCandidate && sportsScore >= 0.5) {
+          const sport = extractSport(polymarket.title) || extractSport(kalshi.title);
+          const team = extractTeam(polymarket.title) || extractTeam(kalshi.title);
+          const betType = extractBetType(polymarket.title) || extractBetType(kalshi.title);
+          const event = extractMajorEvent(polymarket.title) || extractMajorEvent(kalshi.title);
+          
+          if (event) reasons.push(event.replace('_', ' '));
+          else if (sport) reasons.push(sport.toUpperCase());
+          if (team) reasons.push(team);
+          if (betType) reasons.push(betType.type);
+        } else {
+          if (baseEventScore >= 0.6) reasons.push(`base event ${Math.round(baseEventScore * 100)}%`);
+          else if (titleScore >= 0.4) reasons.push(`title ${Math.round(titleScore * 100)}%`);
+        }
+        
         if (bracketScore >= 0.5) reasons.push(`bracket match`);
         if (entityScore >= 0.3) reasons.push(`entities ${Math.round(entityScore * 100)}%`);
         if (tickerScore >= 0.5) reasons.push(`ticker match`);
