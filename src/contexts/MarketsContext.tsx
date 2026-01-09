@@ -15,7 +15,7 @@ import {
   DiscoveryStatus,
 } from '@/types/dome';
 import { useAuth } from '@/contexts/AuthContext';
-import { globalRateLimiter } from '@/lib/rate-limiter';
+import { polymarketRateLimiter, kalshiRateLimiter, getCombinedStats } from '@/lib/rate-limiter';
 import { toast } from '@/hooks/use-toast';
 import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
 
@@ -330,7 +330,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       lastDiscoveryTime: lastDiscovery,
       lastPriceUpdateTime: lastPriceUpdate,
       connectionMode,
-      requestsPerMinute: globalRateLimiter.getRequestsPerMinute(),
+      requestsPerMinute: getCombinedStats().totalRpm,
       marketsWithPrices: updatedPriceCount,
       discoveryProgress,
       liveRpm,
@@ -494,12 +494,15 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const rateLimitedFetch = async (
     url: string,
     apiKey: string,
+    platform: Platform,
     signal?: AbortSignal,
     retries = 5
   ): Promise<Response> => {
+    const rateLimiter = platform === 'POLYMARKET' ? polymarketRateLimiter : kalshiRateLimiter;
+    
     for (let attempt = 0; attempt < retries; attempt++) {
-      // Wait for rate limiter
-      await globalRateLimiter.waitAndAcquire();
+      // Wait for platform-specific rate limiter
+      await rateLimiter.waitAndAcquire();
 
       if (signal?.aborted) {
         throw new Error('Aborted');
@@ -627,7 +630,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       const batch = jobs.slice(i, i + REQUEST_BATCH_SIZE);
       const promises: Promise<void>[] = [];
 
-      await globalRateLimiter.acquireStream(batch.length, (index) => {
+      await polymarketRateLimiter.acquireStream(batch.length, (index) => {
         const job = batch[index];
 
         const promise = fetch(`https://api.domeapi.io/v1/polymarket/market-price/${job.tokenId}`, {
@@ -701,7 +704,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         if (signal?.aborted) break;
 
         const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}`;
-        const response = await rateLimitedFetch(url, apiKey, signal);
+        const response = await rateLimitedFetch(url, apiKey, platform, signal);
 
         let pageMarkets: UnifiedMarket[] = [];
         let hasMore = false;
@@ -888,8 +891,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return { tokenId, price: null };
     }
 
-    // CRITICAL: Wait for rate limiter BEFORE making request
-    await globalRateLimiter.waitAndAcquire();
+    // CRITICAL: Wait for rate limiter BEFORE making request (Polymarket price endpoint)
+    await polymarketRateLimiter.waitAndAcquire();
 
     try {
       const response = await fetch(
@@ -910,7 +913,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       if (response.status === 429) {
         const data = await response.json().catch(() => ({}));
         const retryAfter = data.retry_after || 10;
-        globalRateLimiter.markRateLimited(retryAfter);
+        polymarketRateLimiter.markRateLimited(retryAfter);
         priceRateLimitedUntil.current = Date.now() + retryAfter * 1000;
         console.log(`[Price] Rate limited, backing off for ${retryAfter}s`);
         return { tokenId, price: null, rateLimited: true };
@@ -1005,7 +1008,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const logNow = Date.now();
     if (logNow - lastQpsLogAtRef.current > 10000) {
       lastQpsLogAtRef.current = logNow;
-      console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} matched=${matchedMarkets.length} available=${globalRateLimiter.getAvailableTokens()}`);
+      console.log(`[Price] RPM=${getCombinedStats().totalRpm} matched=${matchedMarkets.length} available=${polymarketRateLimiter.getAvailableTokens()}`);
     }
   }, [getApiKey, firePriceFetch]);
 
@@ -1086,7 +1089,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       const logNow = Date.now();
       if (logNow - lastQpsLogAtRef.current > 10000) {
         lastQpsLogAtRef.current = logNow;
-        console.log(`[Price] RPM=${globalRateLimiter.getRequestsPerMinute()} matched=${matchedMarkets.length} target=${targetMarkets.length}`);
+        console.log(`[Price] RPM=${getCombinedStats().totalRpm} matched=${matchedMarkets.length} target=${targetMarkets.length}`);
       }
     }
     
@@ -1189,7 +1192,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
           try {
             const url = `https://api.domeapi.io/v1/kalshi/markets?market_ticker=${safeTicker}&limit=1`;
-            const response = await rateLimitedFetch(url, apiKey);
+            const response = await rateLimitedFetch(url, apiKey, 'KALSHI');
             const data: KalshiMarketsResponse = await response.json();
             const market = data.markets?.find((m) => m.market_ticker === ticker) ?? data.markets?.[0];
 
@@ -1407,7 +1410,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     rpmIntervalRef.current = setInterval(() => {
       setLiveRpm(prev => {
-        const newRpm = globalRateLimiter.getRequestsPerMinute();
+        const newRpm = getCombinedStats().totalRpm;
         return prev === newRpm ? prev : newRpm;
       });
     }, 1000);

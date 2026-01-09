@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { DomeTier } from '@/types/dome';
-import { globalRateLimiter } from '@/lib/rate-limiter';
+import { setAllTiers } from '@/lib/rate-limiter';
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -53,7 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             tier: parsed.tier,
             isReady: true,
           }));
-          globalRateLimiter.setTier(parsed.tier);
+          setAllTiers(parsed.tier);
           return;
         }
       } catch {
@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: false,
       isReady: true,
     }));
-    globalRateLimiter.setTier('free');
+    setAllTiers('free');
   }, []);
 
   const validateApiKey = async (apiKey: string, retries = 3): Promise<boolean> => {
@@ -202,12 +202,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       error: null,
       tier: 'free',
     });
-    globalRateLimiter.setTier('free');
+    setAllTiers('free');
   }, []);
 
   const setTier = useCallback((tier: DomeTier) => {
     setState(prev => ({ ...prev, tier }));
-    globalRateLimiter.setTier(tier);
+    setAllTiers(tier);
     
     // Update stored session
     const session = sessionStorage.getItem(SESSION_KEY);
