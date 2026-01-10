@@ -44,6 +44,90 @@ export type Database = {
         }
         Relationships: []
       }
+      markets: {
+        Row: {
+          close_time: string | null
+          condition_id: string | null
+          created_at: string | null
+          end_time: string | null
+          event_slug: string | null
+          id: string
+          kalshi_event_ticker: string | null
+          kalshi_ticker: string | null
+          last_price_updated_at: string | null
+          last_updated: string | null
+          market_slug: string | null
+          platform: string
+          side_a_label: string | null
+          side_a_price: number | null
+          side_a_probability: number | null
+          side_a_token_id: string | null
+          side_b_label: string | null
+          side_b_price: number | null
+          side_b_probability: number | null
+          side_b_token_id: string | null
+          start_time: string | null
+          status: string | null
+          title: string
+          volume: number | null
+          volume_24h: number | null
+        }
+        Insert: {
+          close_time?: string | null
+          condition_id?: string | null
+          created_at?: string | null
+          end_time?: string | null
+          event_slug?: string | null
+          id: string
+          kalshi_event_ticker?: string | null
+          kalshi_ticker?: string | null
+          last_price_updated_at?: string | null
+          last_updated?: string | null
+          market_slug?: string | null
+          platform: string
+          side_a_label?: string | null
+          side_a_price?: number | null
+          side_a_probability?: number | null
+          side_a_token_id?: string | null
+          side_b_label?: string | null
+          side_b_price?: number | null
+          side_b_probability?: number | null
+          side_b_token_id?: string | null
+          start_time?: string | null
+          status?: string | null
+          title: string
+          volume?: number | null
+          volume_24h?: number | null
+        }
+        Update: {
+          close_time?: string | null
+          condition_id?: string | null
+          created_at?: string | null
+          end_time?: string | null
+          event_slug?: string | null
+          id?: string
+          kalshi_event_ticker?: string | null
+          kalshi_ticker?: string | null
+          last_price_updated_at?: string | null
+          last_updated?: string | null
+          market_slug?: string | null
+          platform?: string
+          side_a_label?: string | null
+          side_a_price?: number | null
+          side_a_probability?: number | null
+          side_a_token_id?: string | null
+          side_b_label?: string | null
+          side_b_price?: number | null
+          side_b_probability?: number | null
+          side_b_token_id?: string | null
+          start_time?: string | null
+          status?: string | null
+          title?: string
+          volume?: number | null
+          volume_24h?: number | null
+        }
+        Relationships: []
+      }
       mismatch_reports: {
         Row: {
           created_at: string
@@ -86,6 +170,39 @@ export type Database = {
           polymarket_slug?: string | null
           polymarket_title?: string
           report_reason?: string | null
+        }
+        Relationships: []
+      }
+      scan_jobs: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          kalshi_found: number | null
+          polymarket_found: number | null
+          started_at: string | null
+          status: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          kalshi_found?: number | null
+          polymarket_found?: number | null
+          started_at?: string | null
+          status?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          kalshi_found?: number | null
+          polymarket_found?: number | null
+          started_at?: string | null
+          status?: string | null
         }
         Relationships: []
       }
