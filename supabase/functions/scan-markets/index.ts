@@ -332,16 +332,18 @@ Deno.serve(async (req) => {
   }
   
   try {
-    // Get Dome API key from request body
+    // Get Dome API key from request body OR environment variable (for cron jobs)
     const body = await req.json().catch(() => ({}));
-    const domeApiKey = body.dome_api_key;
+    const domeApiKey = body.dome_api_key || Deno.env.get("DOME_API_KEY");
     
     if (!domeApiKey) {
       return new Response(
-        JSON.stringify({ error: "dome_api_key is required" }),
+        JSON.stringify({ error: "dome_api_key is required (body or DOME_API_KEY env)" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    
+    console.log(`[scan-markets] API key source: ${body.dome_api_key ? "request body" : "environment variable"}`);
     
     // Initialize Supabase client with service role
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
