@@ -18,6 +18,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { polymarketRateLimiter, kalshiRateLimiter, getCombinedStats, allocateQpsBudget } from '@/lib/rate-limiter';
 import { toast } from '@/hooks/use-toast';
 import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
+import { supabase } from '@/integrations/supabase/client';
 
 interface MarketsContextType {
   markets: UnifiedMarket[];
@@ -43,6 +44,9 @@ interface MarketsContextType {
   refreshKalshiPrices: () => void;
   refreshAllMatchedPrices: () => void;
   setMatchedPolymarketIds: (ids: Set<string>) => void;
+  useCloudScanning: boolean;
+  setUseCloudScanning: (value: boolean) => void;
+  cloudScanJobId: string | null;
 }
 
 const defaultFilters: MarketFilters = {
@@ -109,6 +113,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   
   const [pendingWarmup, setPendingWarmup] = useState(false);
   const isWarmingUpRef = useRef(false);
+  
+  // Cloud scanning state
+  const [useCloudScanning, setUseCloudScanning] = useState(true); // Default to cloud
+  const [cloudScanJobId, setCloudScanJobId] = useState<string | null>(null);
 
   // Batched price updates - accumulate updates and flush every 500ms to reduce re-renders
   const pendingPriceUpdates = useRef<Map<string, { priceA: number; priceB: number; timestamp: Date }>>(new Map());
@@ -1177,22 +1185,268 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     startSteadyPriceLoop();
   }, [startSteadyPriceLoop]);
 
+  // Cloud-based discovery using edge function
+  const runCloudDiscovery = useCallback(async () => {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    
+    setDiscoveryProgress({
+      polymarket: { offset: 0, found: 0, hasMore: true },
+      kalshi: { offset: 0, found: 0, hasMore: true },
+      status: 'running',
+      startedAt: new Date(),
+      completedAt: null,
+    });
+    
+    try {
+      // Call edge function to start cloud scanning
+      const { data, error } = await supabase.functions.invoke('scan-markets', {
+        body: { dome_api_key: apiKey },
+      });
+      
+      if (error) {
+        console.error('[Cloud Discovery] Edge function error:', error);
+        throw error;
+      }
+      
+      setCloudScanJobId(data.jobId);
+      console.log('[Cloud Discovery] Started job:', data.jobId);
+      
+      toast({
+        title: "Cloud scan started",
+        description: "Markets are being scanned in the cloud. This won't lag your browser.",
+      });
+    } catch (error) {
+      console.error('[Cloud Discovery] Error:', error);
+      setDiscoveryProgress(prev => prev ? { ...prev, status: 'error', completedAt: new Date() } : null);
+    }
+  }, [getApiKey]);
+  
+  // Load markets from database (used after cloud scan or on mount)
+  const loadMarketsFromDatabase = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('markets')
+        .select('*')
+        .eq('status', 'open')
+        .order('end_time', { ascending: true });
+      
+      if (error) {
+        console.error('[Load Markets] Error:', error);
+        return;
+      }
+      
+      if (!data || data.length === 0) return;
+      
+      // Convert database records to UnifiedMarket format
+      const unifiedMarkets: UnifiedMarket[] = data.map((record: any) => ({
+        id: record.id,
+        platform: record.platform as Platform,
+        title: record.title,
+        eventSlug: record.event_slug,
+        eventTitle: record.event_slug?.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+        marketSlug: record.market_slug,
+        conditionId: record.condition_id,
+        kalshiMarketTicker: record.kalshi_ticker,
+        kalshiEventTicker: record.kalshi_event_ticker,
+        startTime: new Date(record.start_time),
+        endTime: new Date(record.end_time),
+        closeTime: record.close_time ? new Date(record.close_time) : undefined,
+        status: record.status as 'open' | 'closed',
+        sideA: {
+          tokenId: record.side_a_token_id,
+          label: record.side_a_label || 'Yes',
+          price: record.side_a_price,
+          probability: record.side_a_probability,
+          odds: record.side_a_price && record.side_a_price > 0 ? 1 / record.side_a_price : null,
+        },
+        sideB: {
+          tokenId: record.side_b_token_id,
+          label: record.side_b_label || 'No',
+          price: record.side_b_price,
+          probability: record.side_b_probability,
+          odds: record.side_b_price && record.side_b_price > 0 ? 1 / record.side_b_price : null,
+        },
+        volume: record.volume,
+        volume24h: record.volume_24h,
+        lastUpdated: new Date(record.last_updated),
+        lastPriceUpdatedAt: record.last_price_updated_at ? new Date(record.last_price_updated_at) : null,
+      }));
+      
+      setMarkets(unifiedMarkets);
+      console.log(`[Load Markets] Loaded ${unifiedMarkets.length} markets from database`);
+      
+      // Update sync state
+      setSyncState(prev => ({
+        POLYMARKET: { ...prev.POLYMARKET, lastSuccessAt: new Date() },
+        KALSHI: { ...prev.KALSHI, lastSuccessAt: new Date() },
+      }));
+    } catch (error) {
+      console.error('[Load Markets] Error:', error);
+    }
+  }, []);
+  
+  // Subscribe to realtime updates from scan_jobs table
+  useEffect(() => {
+    if (!cloudScanJobId) return;
+    
+    const channel = supabase
+      .channel(`job-${cloudScanJobId}`)
+      .on(
+        'postgres_changes',
+        { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'scan_jobs',
+          filter: `id=eq.${cloudScanJobId}`,
+        },
+        (payload: any) => {
+          const job = payload.new;
+          console.log('[Cloud Discovery] Job update:', job);
+          
+          if (job.status === 'completed') {
+            setDiscoveryProgress({
+              polymarket: { offset: 0, found: job.polymarket_found || 0, hasMore: false },
+              kalshi: { offset: 0, found: job.kalshi_found || 0, hasMore: false },
+              status: 'completed',
+              startedAt: job.started_at ? new Date(job.started_at) : null,
+              completedAt: new Date(),
+            });
+            
+            // Load markets from database
+            loadMarketsFromDatabase();
+            
+            // Trigger warmup
+            setPendingWarmup(true);
+            
+            toast({
+              title: "Cloud scan complete",
+              description: `Found ${(job.polymarket_found || 0) + (job.kalshi_found || 0)} markets`,
+            });
+            
+            // Clear progress after delay
+            setTimeout(() => setDiscoveryProgress(null), 5000);
+          } else if (job.status === 'error') {
+            setDiscoveryProgress(prev => prev ? { ...prev, status: 'error', completedAt: new Date() } : null);
+            toast({
+              title: "Cloud scan failed",
+              description: job.error_message || "Unknown error",
+              variant: "destructive",
+            });
+          } else if (job.status === 'running') {
+            setDiscoveryProgress({
+              polymarket: { offset: 0, found: job.polymarket_found || 0, hasMore: true },
+              kalshi: { offset: 0, found: job.kalshi_found || 0, hasMore: true },
+              status: 'running',
+              startedAt: job.started_at ? new Date(job.started_at) : new Date(),
+              completedAt: null,
+            });
+          }
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [cloudScanJobId, loadMarketsFromDatabase]);
+  
+  // Subscribe to realtime market updates
+  useEffect(() => {
+    if (!useCloudScanning) return;
+    
+    const channel = supabase
+      .channel('markets-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'markets' },
+        (payload: any) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const record = payload.new;
+            const market: UnifiedMarket = {
+              id: record.id,
+              platform: record.platform as Platform,
+              title: record.title,
+              eventSlug: record.event_slug,
+              eventTitle: record.event_slug?.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+              marketSlug: record.market_slug,
+              conditionId: record.condition_id,
+              kalshiMarketTicker: record.kalshi_ticker,
+              kalshiEventTicker: record.kalshi_event_ticker,
+              startTime: new Date(record.start_time),
+              endTime: new Date(record.end_time),
+              closeTime: record.close_time ? new Date(record.close_time) : undefined,
+              status: record.status,
+              sideA: {
+                tokenId: record.side_a_token_id,
+                label: record.side_a_label || 'Yes',
+                price: record.side_a_price,
+                probability: record.side_a_probability,
+                odds: record.side_a_price && record.side_a_price > 0 ? 1 / record.side_a_price : null,
+              },
+              sideB: {
+                tokenId: record.side_b_token_id,
+                label: record.side_b_label || 'No',
+                price: record.side_b_price,
+                probability: record.side_b_probability,
+                odds: record.side_b_price && record.side_b_price > 0 ? 1 / record.side_b_price : null,
+              },
+              volume: record.volume,
+              volume24h: record.volume_24h,
+              lastUpdated: new Date(record.last_updated),
+              lastPriceUpdatedAt: record.last_price_updated_at ? new Date(record.last_price_updated_at) : null,
+            };
+            
+            setMarkets(prev => {
+              const existing = prev.findIndex(m => m.id === market.id);
+              if (existing >= 0) {
+                const updated = [...prev];
+                updated[existing] = market;
+                return updated;
+              }
+              return [...prev, market];
+            });
+          } else if (payload.eventType === 'DELETE') {
+            setMarkets(prev => prev.filter(m => m.id !== payload.old.id));
+          }
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [useCloudScanning]);
+
   const startDiscovery = useCallback(() => {
     if (isDiscoveringRef.current) return;
     isDiscoveringRef.current = true;
     setIsDiscovering(true);
 
-    // Initial discovery - warmup is now coordinated via useEffect when matches are ready
-    runDiscovery();
+    if (useCloudScanning) {
+      // Use cloud-based scanning
+      runCloudDiscovery();
+      
+      // Schedule periodic cloud rediscovery
+      const intervalMs = tier === 'free' ? 180000 : 120000; // 3 min free, 2 min paid
+      discoveryIntervalRef.current = setInterval(() => {
+        if (isDiscoveringRef.current) {
+          runCloudDiscovery();
+        }
+      }, intervalMs);
+    } else {
+      // Use browser-based scanning (original)
+      runDiscovery();
 
-    // Schedule periodic rediscovery (longer interval for Free tier)
-    const intervalMs = tier === 'free' ? 120000 : 60000;
-    discoveryIntervalRef.current = setInterval(() => {
-      if (isDiscoveringRef.current) {
-        runDiscovery();
-      }
-    }, intervalMs);
-  }, [runDiscovery, tier]);
+      // Schedule periodic rediscovery (longer interval for Free tier)
+      const intervalMs = tier === 'free' ? 120000 : 60000;
+      discoveryIntervalRef.current = setInterval(() => {
+        if (isDiscoveringRef.current) {
+          runDiscovery();
+        }
+      }, intervalMs);
+    }
+  }, [runDiscovery, runCloudDiscovery, tier, useCloudScanning]);
 
   const stopDiscovery = useCallback(() => {
     isDiscoveringRef.current = false;
@@ -1531,6 +1785,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       refreshKalshiPrices,
       refreshAllMatchedPrices,
       setMatchedPolymarketIds,
+      useCloudScanning,
+      setUseCloudScanning,
+      cloudScanJobId,
     }}>
       {children}
     </MarketsContext.Provider>
@@ -1592,5 +1849,8 @@ export function useMarkets(): MarketsContextType {
     setMatchedPolymarketIds: () => undefined,
     refreshKalshiPrices: () => undefined,
     refreshAllMatchedPrices: () => undefined,
+    useCloudScanning: true,
+    setUseCloudScanning: () => undefined,
+    cloudScanJobId: null,
   };
 }
