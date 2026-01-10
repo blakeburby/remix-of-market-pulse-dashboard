@@ -861,11 +861,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       
       const [polyProbe, kalshiProbe] = await Promise.all([
         fetch('https://api.domeapi.io/v1/polymarket/markets?status=open&limit=1', {
-          headers: { 'X-Api-Key': apiKey },
+          headers: { 'Authorization': `Bearer ${apiKey}` },
           signal,
         }),
         fetch('https://api.domeapi.io/v1/kalshi/markets?status=open&limit=1', {
-          headers: { 'X-Api-Key': apiKey },
+          headers: { 'Authorization': `Bearer ${apiKey}` },
           signal,
         }),
       ]);
