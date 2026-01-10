@@ -8,6 +8,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Timeout buffer - exit gracefully before edge function limit (150s)
+const TIMEOUT_MS = 140000;
+const START_TIME = Date.now();
+
+// Only fetch markets ending within the next 30 days
+const END_TIME_WINDOW_DAYS = 30;
+
 interface PolymarketMarket {
   market_slug: string;
   condition_id: string;
@@ -61,8 +68,12 @@ class CloudRateLimiter {
 }
 
 // Shared rate limiters - 80% of actual limits for safety
-const polyRateLimiter = new CloudRateLimiter(640); // 80 QPS * 10s * 80%
+const polyRateLimiter = new CloudRateLimiter(640);
 const kalshiRateLimiter = new CloudRateLimiter(640);
+
+function isTimedOut(): boolean {
+  return Date.now() - START_TIME > TIMEOUT_MS;
+}
 
 async function fetchWithRetry(
   url: string,
@@ -71,6 +82,10 @@ async function fetchWithRetry(
   retries = 3
 ): Promise<Response> {
   for (let attempt = 0; attempt < retries; attempt++) {
+    if (isTimedOut()) {
+      throw new Error("TIMEOUT");
+    }
+    
     await rateLimiter.waitAndAcquire();
     
     try {
@@ -95,65 +110,12 @@ async function fetchWithRetry(
       
       return response;
     } catch (error) {
+      if (error instanceof Error && error.message === "TIMEOUT") throw error;
       if (attempt === retries - 1) throw error;
       await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt + 1) * 1000));
     }
   }
   throw new Error("Max retries exceeded");
-}
-
-async function fetchPlatformMarkets(
-  platform: "POLYMARKET" | "KALSHI",
-  apiKey: string,
-  onProgress: (found: number) => void
-): Promise<any[]> {
-  const limit = 100;
-  const rateLimiter = platform === "POLYMARKET" ? polyRateLimiter : kalshiRateLimiter;
-  const baseUrl = platform === "POLYMARKET"
-    ? "https://api.domeapi.io/v1/polymarket/markets"
-    : "https://api.domeapi.io/v1/kalshi/markets";
-  
-  // Probe for total
-  const probeResp = await fetchWithRetry(`${baseUrl}?status=open&limit=1`, apiKey, rateLimiter);
-  const probeData = await probeResp.json();
-  const total = probeData.pagination?.total || (platform === "POLYMARKET" ? 4000 : 14000);
-  const totalPages = Math.ceil(total / limit);
-  
-  console.log(`[${platform}] Total markets: ${total}, pages: ${totalPages}`);
-  
-  const allMarkets: any[] = [];
-  const offsets = Array.from({ length: totalPages }, (_, i) => i * limit);
-  
-  // Fetch in batches of 10 concurrent requests
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < offsets.length; i += BATCH_SIZE) {
-    const batch = offsets.slice(i, i + BATCH_SIZE);
-    
-    const promises = batch.map(async (offset) => {
-      try {
-        const response = await fetchWithRetry(
-          `${baseUrl}?status=open&limit=${limit}&offset=${offset}`,
-          apiKey,
-          rateLimiter
-        );
-        const data = await response.json();
-        return data.markets || [];
-      } catch (error) {
-        console.error(`[${platform}] Page ${offset / limit} error:`, error);
-        return [];
-      }
-    });
-    
-    const results = await Promise.all(promises);
-    for (const markets of results) {
-      allMarkets.push(...markets);
-    }
-    
-    onProgress(allMarkets.length);
-    console.log(`[${platform}] Progress: ${allMarkets.length}/${total}`);
-  }
-  
-  return allMarkets;
 }
 
 function convertPolymarketMarket(market: PolymarketMarket) {
@@ -213,6 +175,105 @@ function convertKalshiMarket(market: KalshiMarket) {
   };
 }
 
+async function fetchAndInsertPlatformMarkets(
+  platform: "POLYMARKET" | "KALSHI",
+  apiKey: string,
+  supabase: any,
+  jobId: string,
+  updateField: "polymarket_found" | "kalshi_found"
+): Promise<{ found: number; timedOut: boolean }> {
+  const limit = 100;
+  const rateLimiter = platform === "POLYMARKET" ? polyRateLimiter : kalshiRateLimiter;
+  const baseUrl = platform === "POLYMARKET"
+    ? "https://api.domeapi.io/v1/polymarket/markets"
+    : "https://api.domeapi.io/v1/kalshi/markets";
+  
+  // Calculate end time filter (markets ending within 30 days)
+  const endTimeFilter = Math.floor((Date.now() + END_TIME_WINDOW_DAYS * 24 * 60 * 60 * 1000) / 1000);
+  
+  try {
+    // Probe for total with end_time filter
+    const probeUrl = `${baseUrl}?status=open&end_time_lte=${endTimeFilter}&limit=1`;
+    console.log(`[${platform}] Probing: ${probeUrl}`);
+    
+    const probeResp = await fetchWithRetry(probeUrl, apiKey, rateLimiter);
+    const probeData = await probeResp.json();
+    const total = probeData.pagination?.total || 0;
+    const totalPages = Math.ceil(total / limit);
+    
+    console.log(`[${platform}] Filtered total: ${total} markets (ending within ${END_TIME_WINDOW_DAYS} days), ${totalPages} pages`);
+    
+    if (total === 0) {
+      return { found: 0, timedOut: false };
+    }
+    
+    let totalInserted = 0;
+    const offsets = Array.from({ length: totalPages }, (_, i) => i * limit);
+    
+    // Fetch and insert in batches of 5 concurrent requests (reduced for stability)
+    const FETCH_BATCH_SIZE = 5;
+    
+    for (let i = 0; i < offsets.length; i += FETCH_BATCH_SIZE) {
+      // Check timeout before each batch
+      if (isTimedOut()) {
+        console.log(`[${platform}] Timeout reached at batch ${i / FETCH_BATCH_SIZE}, inserted ${totalInserted} so far`);
+        return { found: totalInserted, timedOut: true };
+      }
+      
+      const batch = offsets.slice(i, i + FETCH_BATCH_SIZE);
+      
+      const promises = batch.map(async (offset) => {
+        try {
+          const url = `${baseUrl}?status=open&end_time_lte=${endTimeFilter}&limit=${limit}&offset=${offset}`;
+          const response = await fetchWithRetry(url, apiKey, rateLimiter);
+          const data = await response.json();
+          return data.markets || [];
+        } catch (error) {
+          if (error instanceof Error && error.message === "TIMEOUT") throw error;
+          console.error(`[${platform}] Page ${offset / limit} error:`, error);
+          return [];
+        }
+      });
+      
+      const results = await Promise.all(promises);
+      const markets = results.flat();
+      
+      if (markets.length === 0) continue;
+      
+      // Convert and insert immediately
+      const records = platform === "POLYMARKET"
+        ? markets.map(convertPolymarketMarket)
+        : markets.map(convertKalshiMarket);
+      
+      // Upsert this batch
+      const { error } = await supabase.from("markets").upsert(records, {
+        onConflict: "id",
+        ignoreDuplicates: false,
+      });
+      
+      if (error) {
+        console.error(`[${platform}] Upsert error:`, error);
+      } else {
+        totalInserted += records.length;
+      }
+      
+      // Update progress in scan_jobs for real-time feedback
+      await supabase.from("scan_jobs").update({
+        [updateField]: totalInserted,
+      }).eq("id", jobId);
+      
+      console.log(`[${platform}] Batch ${Math.floor(i / FETCH_BATCH_SIZE) + 1}/${Math.ceil(offsets.length / FETCH_BATCH_SIZE)}: inserted ${records.length}, total ${totalInserted}/${total}`);
+    }
+    
+    return { found: totalInserted, timedOut: false };
+  } catch (error) {
+    if (error instanceof Error && error.message === "TIMEOUT") {
+      return { found: 0, timedOut: true };
+    }
+    throw error;
+  }
+}
+
 async function runDiscovery(supabase: any, jobId: string, domeApiKey: string) {
   console.log(`[Discovery] Starting job ${jobId}`);
   
@@ -223,59 +284,37 @@ async function runDiscovery(supabase: any, jobId: string, domeApiKey: string) {
       started_at: new Date().toISOString(),
     }).eq("id", jobId);
     
-    let polyFound = 0;
-    let kalshiFound = 0;
+    // Fetch and insert both platforms (sequentially to avoid overwhelming the DB)
+    console.log(`[Discovery] Fetching Polymarket markets...`);
+    const polyResult = await fetchAndInsertPlatformMarkets(
+      "POLYMARKET",
+      domeApiKey,
+      supabase,
+      jobId,
+      "polymarket_found"
+    );
     
-    // Fetch both platforms in parallel
-    const [polyMarkets, kalshiMarkets] = await Promise.all([
-      fetchPlatformMarkets("POLYMARKET", domeApiKey, (found) => {
-        polyFound = found;
-      }),
-      fetchPlatformMarkets("KALSHI", domeApiKey, (found) => {
-        kalshiFound = found;
-      }),
-    ]);
+    console.log(`[Discovery] Fetching Kalshi markets...`);
+    const kalshiResult = await fetchAndInsertPlatformMarkets(
+      "KALSHI",
+      domeApiKey,
+      supabase,
+      jobId,
+      "kalshi_found"
+    );
     
-    console.log(`[Discovery] Fetched ${polyMarkets.length} Polymarket, ${kalshiMarkets.length} Kalshi`);
+    const timedOut = polyResult.timedOut || kalshiResult.timedOut;
     
-    // Convert and upsert in batches
-    const BATCH_SIZE = 100;
-    
-    // Polymarket upserts
-    const polyRecords = polyMarkets.map(convertPolymarketMarket);
-    for (let i = 0; i < polyRecords.length; i += BATCH_SIZE) {
-      const batch = polyRecords.slice(i, i + BATCH_SIZE);
-      const { error } = await supabase.from("markets").upsert(batch, {
-        onConflict: "id",
-        ignoreDuplicates: false,
-      });
-      if (error) {
-        console.error(`[Discovery] Polymarket upsert error:`, error);
-      }
-    }
-    
-    // Kalshi upserts
-    const kalshiRecords = kalshiMarkets.map(convertKalshiMarket);
-    for (let i = 0; i < kalshiRecords.length; i += BATCH_SIZE) {
-      const batch = kalshiRecords.slice(i, i + BATCH_SIZE);
-      const { error } = await supabase.from("markets").upsert(batch, {
-        onConflict: "id",
-        ignoreDuplicates: false,
-      });
-      if (error) {
-        console.error(`[Discovery] Kalshi upsert error:`, error);
-      }
-    }
-    
-    // Mark job as completed
+    // Mark job as completed (or partial if timed out)
     await supabase.from("scan_jobs").update({
-      status: "completed",
-      polymarket_found: polyRecords.length,
-      kalshi_found: kalshiRecords.length,
+      status: timedOut ? "partial" : "completed",
+      polymarket_found: polyResult.found,
+      kalshi_found: kalshiResult.found,
       completed_at: new Date().toISOString(),
+      error_message: timedOut ? "Scan timed out, partial results saved" : null,
     }).eq("id", jobId);
     
-    console.log(`[Discovery] Completed job ${jobId}`);
+    console.log(`[Discovery] ${timedOut ? "Partial" : "Completed"} job ${jobId}: ${polyResult.found} Polymarket, ${kalshiResult.found} Kalshi`);
   } catch (error) {
     console.error(`[Discovery] Error:`, error);
     await supabase.from("scan_jobs").update({
