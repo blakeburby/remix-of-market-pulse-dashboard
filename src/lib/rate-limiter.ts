@@ -99,7 +99,7 @@ export class RateLimiter {
     const qp10s = this.getQp10s();
     
     // If we're rate limited by API, wait
-    let now = Date.now();
+    const now = Date.now();
     if (now < this.rateLimitedUntil) {
       const waitTime = this.rateLimitedUntil - now;
       await new Promise(resolve => setTimeout(resolve, waitTime));
@@ -116,15 +116,7 @@ export class RateLimiter {
       this.cleanupWindow();
     }
     
-    // Also enforce minimum interval between requests
-    now = Date.now();
-    const intervalMs = this.getIntervalMs();
-    const timeSinceLastRequest = now - this.lastRequestTime;
-    if (timeSinceLastRequest < intervalMs && this.lastRequestTime > 0) {
-      const waitTime = intervalMs - timeSinceLastRequest;
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-    
+    // Burst allowed: no minimum interval enforcement - sliding window is sufficient
     this.lastRequestTime = Date.now();
     this.requestTimestamps.push(this.lastRequestTime);
     this.requestTimestamps60s.push(this.lastRequestTime);
@@ -151,16 +143,12 @@ export class RateLimiter {
 
   // Check if a slot is available right now (non-blocking)
   canAcquireNow(): boolean {
-    const now = Date.now();
-    if (now < this.rateLimitedUntil) return false;
+    if (Date.now() < this.rateLimitedUntil) return false;
     
     this.cleanupWindow();
     const qp10s = this.getQp10s();
-    if (this.requestTimestamps.length >= qp10s) return false;
-    
-    const intervalMs = this.getIntervalMs();
-    const timeSinceLastRequest = now - this.lastRequestTime;
-    return timeSinceLastRequest >= intervalMs || this.lastRequestTime === 0;
+    // Only check sliding window - burst allowed within capacity
+    return this.requestTimestamps.length < qp10s;
   }
 
   // Try to acquire without waiting - returns true if acquired
