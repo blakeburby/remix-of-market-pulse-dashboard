@@ -1227,6 +1227,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   // Loading state for initial market load
   const [isLoadingMarkets, setIsLoadingMarkets] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 });
+  const hasInitialLoadCompletedRef = useRef(false);
   
   // Convert a database record to UnifiedMarket format
   const convertDbRecord = useCallback((record: any): UnifiedMarket => ({
@@ -1787,11 +1788,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Load markets from database on mount when using cloud scanning
   useEffect(() => {
-    if (useCloudScanning && isAuthenticated && markets.length === 0 && !isLoadingMarkets) {
+    // Only trigger initial load once, regardless of realtime updates
+    if (useCloudScanning && isAuthenticated && !hasInitialLoadCompletedRef.current && !isLoadingMarkets) {
       console.log('[MarketsContext] Auto-loading markets from database on mount');
+      hasInitialLoadCompletedRef.current = true; // Set immediately to prevent double-load
       loadMarketsFromDatabase();
     }
-  }, [useCloudScanning, isAuthenticated, markets.length, isLoadingMarkets, loadMarketsFromDatabase]);
+  }, [useCloudScanning, isAuthenticated, isLoadingMarkets, loadMarketsFromDatabase]);
 
   // Clean up when user logs out (no auto-start to avoid rate limiting)
   useEffect(() => {
@@ -1800,6 +1803,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       stopPriceUpdates();
       setWsEnabled(false);
       setMarkets([]);
+      hasInitialLoadCompletedRef.current = false; // Reset so next login triggers load
     }
   }, [isAuthenticated]);
 
