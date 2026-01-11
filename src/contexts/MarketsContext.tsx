@@ -29,6 +29,8 @@ interface MarketsContextType {
   filters: MarketFilters;
   isDiscovering: boolean;
   isPriceUpdating: boolean;
+  isLoadingMarkets: boolean;
+  loadingProgress: { loaded: number; total: number };
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   wsSubscriptionCount: number;
   isRefreshingKalshi: boolean;
@@ -1222,59 +1224,98 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getApiKey]);
   
-  // Load markets from database (used after cloud scan or on mount)
+  // Loading state for initial market load
+  const [isLoadingMarkets, setIsLoadingMarkets] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 });
+  
+  // Convert a database record to UnifiedMarket format
+  const convertDbRecord = useCallback((record: any): UnifiedMarket => ({
+    id: record.id,
+    platform: record.platform as Platform,
+    title: record.title,
+    eventSlug: record.event_slug,
+    eventTitle: record.event_slug?.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+    marketSlug: record.market_slug,
+    conditionId: record.condition_id,
+    kalshiMarketTicker: record.kalshi_ticker,
+    kalshiEventTicker: record.kalshi_event_ticker,
+    startTime: new Date(record.start_time),
+    endTime: new Date(record.end_time),
+    closeTime: record.close_time ? new Date(record.close_time) : undefined,
+    status: record.status as 'open' | 'closed',
+    sideA: {
+      tokenId: record.side_a_token_id,
+      label: record.side_a_label || 'Yes',
+      price: record.side_a_price,
+      probability: record.side_a_probability,
+      odds: record.side_a_price && record.side_a_price > 0 ? 1 / record.side_a_price : null,
+    },
+    sideB: {
+      tokenId: record.side_b_token_id,
+      label: record.side_b_label || 'No',
+      price: record.side_b_price,
+      probability: record.side_b_probability,
+      odds: record.side_b_price && record.side_b_price > 0 ? 1 / record.side_b_price : null,
+    },
+    volume: record.volume,
+    volume24h: record.volume_24h,
+    lastUpdated: new Date(record.last_updated),
+    lastPriceUpdatedAt: record.last_price_updated_at ? new Date(record.last_price_updated_at) : null,
+  }), []);
+
+  // Load markets from database with pagination (used after cloud scan or on mount)
   const loadMarketsFromDatabase = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('markets')
-        .select('*')
-        .eq('status', 'open')
-        .order('end_time', { ascending: true });
+      setIsLoadingMarkets(true);
+      setLoadingProgress({ loaded: 0, total: 0 });
       
-      if (error) {
-        console.error('[Load Markets] Error:', error);
-        return;
+      const allMarkets: UnifiedMarket[] = [];
+      const PAGE_SIZE = 1000;
+      let offset = 0;
+      let hasMore = true;
+      
+      // First, get total count
+      const { count } = await supabase
+        .from('markets')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'open');
+      
+      const totalCount = count || 0;
+      setLoadingProgress({ loaded: 0, total: totalCount });
+      console.log(`[Load Markets] Total markets to load: ${totalCount}`);
+      
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('markets')
+          .select('*')
+          .eq('status', 'open')
+          .order('end_time', { ascending: true })
+          .range(offset, offset + PAGE_SIZE - 1);
+        
+        if (error) {
+          console.error('[Load Markets] Error:', error);
+          break;
+        }
+        
+        if (!data || data.length === 0) {
+          hasMore = false;
+          break;
+        }
+        
+        // Convert and accumulate
+        const batch = data.map(record => convertDbRecord(record));
+        allMarkets.push(...batch);
+        
+        setLoadingProgress({ loaded: allMarkets.length, total: totalCount });
+        console.log(`[Load Markets] Loaded ${allMarkets.length}/${totalCount} markets...`);
+        
+        // Check if we got a full page (more might exist)
+        hasMore = data.length === PAGE_SIZE;
+        offset += PAGE_SIZE;
       }
       
-      if (!data || data.length === 0) return;
-      
-      // Convert database records to UnifiedMarket format
-      const unifiedMarkets: UnifiedMarket[] = data.map((record: any) => ({
-        id: record.id,
-        platform: record.platform as Platform,
-        title: record.title,
-        eventSlug: record.event_slug,
-        eventTitle: record.event_slug?.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-        marketSlug: record.market_slug,
-        conditionId: record.condition_id,
-        kalshiMarketTicker: record.kalshi_ticker,
-        kalshiEventTicker: record.kalshi_event_ticker,
-        startTime: new Date(record.start_time),
-        endTime: new Date(record.end_time),
-        closeTime: record.close_time ? new Date(record.close_time) : undefined,
-        status: record.status as 'open' | 'closed',
-        sideA: {
-          tokenId: record.side_a_token_id,
-          label: record.side_a_label || 'Yes',
-          price: record.side_a_price,
-          probability: record.side_a_probability,
-          odds: record.side_a_price && record.side_a_price > 0 ? 1 / record.side_a_price : null,
-        },
-        sideB: {
-          tokenId: record.side_b_token_id,
-          label: record.side_b_label || 'No',
-          price: record.side_b_price,
-          probability: record.side_b_probability,
-          odds: record.side_b_price && record.side_b_price > 0 ? 1 / record.side_b_price : null,
-        },
-        volume: record.volume,
-        volume24h: record.volume_24h,
-        lastUpdated: new Date(record.last_updated),
-        lastPriceUpdatedAt: record.last_price_updated_at ? new Date(record.last_price_updated_at) : null,
-      }));
-      
-      setMarkets(unifiedMarkets);
-      console.log(`[Load Markets] Loaded ${unifiedMarkets.length} markets from database`);
+      setMarkets(allMarkets);
+      console.log(`[Load Markets] Total: ${allMarkets.length} markets from database`);
       
       // Update sync state
       setSyncState(prev => ({
@@ -1283,8 +1324,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       }));
     } catch (error) {
       console.error('[Load Markets] Error:', error);
+    } finally {
+      setIsLoadingMarkets(false);
     }
-  }, []);
+  }, [convertDbRecord]);
   
   // Subscribe to realtime updates from scan_jobs table
   useEffect(() => {
@@ -1742,6 +1785,14 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Load markets from database on mount when using cloud scanning
+  useEffect(() => {
+    if (useCloudScanning && isAuthenticated && markets.length === 0 && !isLoadingMarkets) {
+      console.log('[MarketsContext] Auto-loading markets from database on mount');
+      loadMarketsFromDatabase();
+    }
+  }, [useCloudScanning, isAuthenticated, markets.length, isLoadingMarkets, loadMarketsFromDatabase]);
+
   // Clean up when user logs out (no auto-start to avoid rate limiting)
   useEffect(() => {
     if (!isAuthenticated) {
@@ -1770,6 +1821,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       filters,
       isDiscovering,
       isPriceUpdating,
+      isLoadingMarkets,
+      loadingProgress,
       wsStatus,
       wsSubscriptionCount,
       isRefreshingKalshi,
@@ -1834,6 +1887,8 @@ export function useMarkets(): MarketsContextType {
     filters: defaultFilters,
     isDiscovering: false,
     isPriceUpdating: false,
+    isLoadingMarkets: false,
+    loadingProgress: { loaded: 0, total: 0 },
     wsStatus: 'disconnected',
     wsSubscriptionCount: 0,
     isRefreshingKalshi: false,
