@@ -350,6 +350,42 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
+    // Check for running scans (started within last 5 minutes) - overlap prevention
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: runningJobs } = await supabase
+      .from("scan_jobs")
+      .select("id, started_at")
+      .eq("status", "running")
+      .gte("started_at", fiveMinutesAgo);
+
+    if (runningJobs && runningJobs.length > 0) {
+      console.log(`[scan-markets] Skipping - scan already running: ${runningJobs[0].id}`);
+      return new Response(
+        JSON.stringify({ status: "skipped", reason: "Scan already in progress", runningJobId: runningJobs[0].id }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    // Clean up stale running jobs (running for more than 5 minutes)
+    const { data: staleJobs } = await supabase
+      .from("scan_jobs")
+      .select("id")
+      .eq("status", "running")
+      .lt("started_at", fiveMinutesAgo);
+    
+    if (staleJobs && staleJobs.length > 0) {
+      console.log(`[scan-markets] Cleaning up ${staleJobs.length} stale running jobs`);
+      await supabase
+        .from("scan_jobs")
+        .update({ 
+          status: "failed", 
+          error_message: "Marked stale - exceeded timeout",
+          completed_at: new Date().toISOString()
+        })
+        .eq("status", "running")
+        .lt("started_at", fiveMinutesAgo);
+    }
+    
     // Create scan job
     const { data: job, error: jobError } = await supabase
       .from("scan_jobs")
