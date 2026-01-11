@@ -8,7 +8,8 @@ import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { ArbitrageView } from '@/components/dashboard/ArbitrageView';
 import { ArbitrageSettingsPanel } from '@/components/dashboard/ArbitrageSettingsPanel';
 import { Button } from '@/components/ui/button';
-import { Play, Pause, RefreshCw } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Play, Pause, Loader2 } from 'lucide-react';
 
 export default function DashboardPage() {
   const { isAuthenticated, isReady, logout } = useAuth();
@@ -17,6 +18,8 @@ export default function DashboardPage() {
     syncState, 
     isDiscovering,
     isPriceUpdating, 
+    isLoadingMarkets,
+    loadingProgress,
     startDiscovery,
     stopDiscovery,
     startPriceUpdates, 
@@ -50,18 +53,38 @@ export default function DashboardPage() {
   };
 
   const isRunning = isDiscovering || isPriceUpdating;
+  const loadPercent = loadingProgress.total > 0 
+    ? Math.round((loadingProgress.loaded / loadingProgress.total) * 100) 
+    : 0;
 
   return (
     <div className="min-h-screen bg-background">
       <DashboardHeader onLogout={logout} />
       
       <main className="container mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-3 sm:space-y-5">
+        {/* Loading Markets Indicator */}
+        {isLoadingMarkets && (
+          <div className="p-4 rounded-xl bg-card border shadow-sm space-y-3">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-5 h-5 animate-spin text-primary" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium">Loading markets from database...</p>
+                <p className="text-xs text-muted-foreground">
+                  {loadingProgress.loaded.toLocaleString()} / {loadingProgress.total.toLocaleString()} markets
+                </p>
+              </div>
+              <span className="text-sm font-medium text-primary">{loadPercent}%</span>
+            </div>
+            <Progress value={loadPercent} className="h-2" />
+          </div>
+        )}
+
         {/* Controls - Mobile Optimized */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 rounded-xl bg-card border shadow-sm">
           <div className="min-w-0">
             <h2 className="text-base sm:text-lg font-semibold">Market Scanner</h2>
             <p className="text-xs sm:text-sm text-muted-foreground truncate">
-              {isRunning ? 'Scanning for arbitrage...' : 'Start to find opportunities'}
+              {isLoadingMarkets ? 'Loading markets...' : isRunning ? 'Scanning for arbitrage...' : 'Start to find opportunities'}
             </p>
           </div>
           <div className="flex items-center gap-2 self-end sm:self-center">
@@ -76,6 +99,7 @@ export default function DashboardPage() {
               onClick={isRunning ? handleStopAll : handleStartAll}
               size="sm"
               className="h-9 sm:h-10"
+              disabled={isLoadingMarkets}
             >
               {isRunning ? (
                 <>
