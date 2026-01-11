@@ -1,10 +1,10 @@
 import { Card, CardContent } from '@/components/ui/card';
-import { Clock, Timer, Loader2 } from 'lucide-react';
+import { Clock, Timer, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useScanStatus } from '@/hooks/useScanStatus';
 import { useEffect, useState } from 'react';
 
 export function ScanStatusWidget() {
-  const { lastScanAt, nextScanAt, isLoading } = useScanStatus();
+  const { lastScanAt, nextScanAt, lastScanStatus, isLoading } = useScanStatus();
   const [now, setNow] = useState(new Date());
 
   // Update countdown every second
@@ -52,7 +52,20 @@ export function ScanStatusWidget() {
               <Clock className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Last auto-scan</p>
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                Last auto-scan
+                {lastScanStatus === 'partial' && (
+                  <span className="inline-flex items-center gap-0.5 text-yellow-500">
+                    <AlertCircle className="w-3 h-3" />
+                    <span className="text-[10px]">partial</span>
+                  </span>
+                )}
+                {lastScanStatus === 'completed' && (
+                  <span className="inline-flex items-center gap-0.5 text-green-500">
+                    <CheckCircle2 className="w-3 h-3" />
+                  </span>
+                )}
+              </p>
               <p className="text-sm font-medium">
                 {formatRelativeTime(lastScanAt, now)}
                 {lastScanAt && (
