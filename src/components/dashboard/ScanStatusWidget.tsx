@@ -1,10 +1,11 @@
 import { Card, CardContent } from '@/components/ui/card';
-import { Clock, Timer, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Clock, Timer, Loader2, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useScanStatus } from '@/hooks/useScanStatus';
 import { useEffect, useState } from 'react';
 
 export function ScanStatusWidget() {
-  const { lastScanAt, nextScanAt, lastScanStatus, isLoading } = useScanStatus();
+  const { lastScanAt, nextScanAt, lastScanStatus, runningJob, isLoading } = useScanStatus();
   const [now, setNow] = useState(new Date());
 
   // Update countdown every second
@@ -37,6 +38,34 @@ export function ScanStatusWidget() {
           <div className="flex items-center gap-3">
             <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
             <span className="text-sm text-muted-foreground">Loading scan status...</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Show running scan progress
+  if (runningJob) {
+    const totalFound = runningJob.polymarketFound + runningJob.kalshiFound;
+    const elapsedSec = Math.floor((now.getTime() - runningJob.startedAt.getTime()) / 1000);
+    
+    return (
+      <Card className="border-primary/50 shadow-sm bg-primary/5">
+        <CardContent className="p-3 sm:p-4">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 text-primary animate-spin" />
+                <span className="text-sm font-medium text-primary">Scanning markets...</span>
+              </div>
+              <span className="text-xs text-muted-foreground">{elapsedSec}s</span>
+            </div>
+            <Progress value={Math.min((totalFound / 1000) * 100, 95)} className="h-2" />
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Polymarket: {runningJob.polymarketFound.toLocaleString()}</span>
+              <span>Kalshi: {runningJob.kalshiFound.toLocaleString()}</span>
+              <span className="font-medium">Total: {totalFound.toLocaleString()}</span>
+            </div>
           </div>
         </CardContent>
       </Card>
