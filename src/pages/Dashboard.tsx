@@ -1,6 +1,4 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEffect, useRef } from 'react';
 import { useMarkets } from '@/contexts/MarketsContext';
 import { useMarketsLoading } from '@/contexts/MarketsLoadingContext';
 import { useArbitrageSettings } from '@/hooks/useArbitrageSettings';
@@ -8,51 +6,34 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { ArbitrageView } from '@/components/dashboard/ArbitrageView';
 import { ArbitrageSettingsPanel } from '@/components/dashboard/ArbitrageSettingsPanel';
-import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Play, Pause, Loader2, Target, Sparkles, Search } from 'lucide-react';
+import { Loader2, Target, Radio } from 'lucide-react';
 
 export default function DashboardPage() {
-  const { isAuthenticated, isReady, logout } = useAuth();
   const {
     summary, 
     syncState, 
     isDiscovering,
     isPriceUpdating, 
     startDiscovery,
-    stopDiscovery,
     startPriceUpdates, 
-    stopPriceUpdates 
   } = useMarkets();
   const { isLoadingMarkets, loadingProgress } = useMarketsLoading();
   const { settings, updateSettings, resetSettings, defaults } = useArbitrageSettings();
-  const navigate = useNavigate();
+  
+  // Track if we've already started scanning
+  const hasStartedRef = useRef(false);
 
+  // Auto-start scanning when markets finish loading
   useEffect(() => {
-    if (isReady && !isAuthenticated) {
-      navigate('/');
+    if (!isLoadingMarkets && !hasStartedRef.current) {
+      hasStartedRef.current = true;
+      startDiscovery();
+      setTimeout(() => startPriceUpdates(), 3000);
     }
-  }, [isReady, isAuthenticated, navigate]);
-
-  if (!isReady) {
-    return null;
-  }
-
-  if (!isAuthenticated) {
-    return null;
-  }
-
-  const handleStartAll = () => {
-    startDiscovery();
-    setTimeout(() => startPriceUpdates(), 3000);
-  };
-
-  const handleStopAll = () => {
-    stopDiscovery();
-    stopPriceUpdates();
-  };
+  }, [isLoadingMarkets, startDiscovery, startPriceUpdates]);
 
   const isRunning = isDiscovering || isPriceUpdating;
   const loadPercent = loadingProgress.total > 0 
@@ -61,7 +42,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <DashboardHeader onLogout={logout} />
+      <DashboardHeader />
       
       <main className="container mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-3 sm:space-y-5">
         {/* Loading Markets Indicator */}
@@ -81,13 +62,18 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Controls - Mobile Optimized */}
+        {/* Status Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 rounded-xl bg-card border shadow-sm">
-          <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-semibold">Market Scanner</h2>
-            <p className="text-xs sm:text-sm text-muted-foreground truncate">
-              {isLoadingMarkets ? 'Loading markets...' : isRunning ? 'Scanning for arbitrage...' : 'Start to find opportunities'}
-            </p>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`p-2 rounded-full ${isRunning ? 'bg-green-500/10' : 'bg-muted'}`}>
+              <Radio className={`w-4 h-4 ${isRunning ? 'text-green-500 animate-pulse' : 'text-muted-foreground'}`} />
+            </div>
+            <div>
+              <h2 className="text-base sm:text-lg font-semibold">Market Scanner</h2>
+              <p className="text-xs sm:text-sm text-muted-foreground truncate">
+                {isLoadingMarkets ? 'Loading markets...' : isRunning ? 'Scanning for arbitrage opportunities...' : 'Starting...'}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2 self-end sm:self-center">
             <ArbitrageSettingsPanel
@@ -96,27 +82,11 @@ export default function DashboardPage() {
               resetSettings={resetSettings}
               defaults={defaults}
             />
-            <Button
-              variant={isRunning ? "destructive" : "default"}
-              onClick={isRunning ? handleStopAll : handleStartAll}
-              size="sm"
-              className="h-9 sm:h-10"
-              disabled={isLoadingMarkets}
-            >
-              {isRunning ? (
-                <>
-                  <Pause className="w-4 h-4 mr-1.5" />
-                  <span className="hidden sm:inline">Stop</span>
-                  <span className="sm:hidden">Stop</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 mr-1.5" />
-                  <span className="hidden sm:inline">Start Scanning</span>
-                  <span className="sm:hidden">Start</span>
-                </>
-              )}
-            </Button>
+            {isRunning && (
+              <span className="text-xs font-medium text-green-500 bg-green-500/10 px-2 py-1 rounded-full">
+                Live
+              </span>
+            )}
           </div>
         </div>
 
