@@ -491,7 +491,7 @@ export function ArbitrageView() {
     updateSettings,
   } = useArbitrage();
   
-  const { refreshAllMatchedPrices, isRefreshingAllPrices, refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary } = useMarkets();
+  const { refreshAllMatchedPrices, isRefreshingAllPrices, refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary, wsStatus, kalshiWsStatus, kalshiWsSubscriptionCount } = useMarkets();
   const { isInWatchlist, toggleWatchlist } = useWatchlist();
   const [sortBy, setSortBy] = useState<SortOption>('profit');
   const [searchQuery, setSearchQuery] = useState('');
@@ -626,6 +626,12 @@ export function ArbitrageView() {
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-background/80 border border-border/50">
                 <KalshiIcon className="w-4 h-4" />
                 <span className="font-mono text-sm font-semibold">{summary.kalshiCount.toLocaleString()}</span>
+                {kalshiWsStatus === 'connected' && (
+                  <span className="flex items-center gap-1 text-[10px] text-chart-4">
+                    <span className="w-1.5 h-1.5 rounded-full bg-chart-4 animate-pulse" />
+                    WS
+                  </span>
+                )}
               </div>
             </div>
             

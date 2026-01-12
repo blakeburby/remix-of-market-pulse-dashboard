@@ -18,6 +18,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { polymarketRateLimiter, kalshiRateLimiter, getCombinedStats, allocateQpsBudget } from '@/lib/rate-limiter';
 import { toast } from '@/hooks/use-toast';
 import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
+import { useKalshiWebSocket, KalshiWSStatus } from '@/hooks/useKalshiWebSocket';
+import { KalshiPrices } from '@/lib/kalshi-orderbook';
 import { supabase } from '@/integrations/supabase/client';
 import { useMarketsLoading } from './MarketsLoadingContext';
 
@@ -34,6 +36,8 @@ interface MarketsContextType {
   loadingProgress: { loaded: number; total: number };
   wsStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
   wsSubscriptionCount: number;
+  kalshiWsStatus: KalshiWSStatus;
+  kalshiWsSubscriptionCount: number;
   isRefreshingKalshi: boolean;
   isRefreshingAllPrices: boolean;
   lastKalshiRefresh: Date | null;
@@ -177,13 +181,63 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     setLastPriceUpdate(new Date());
   }, []);
 
-  // WebSocket connection
+  // WebSocket connection for Polymarket
   const { status: wsStatus, subscriptionCount: wsSubscriptionCount, isConnected: wsConnected } = useDomeWebSocket({
     apiKey: getApiKey(),
     tier,
     marketSlugs: polymarketSlugs,
     onPriceUpdate: handleWsPriceUpdate,
     enabled: wsEnabled && isAuthenticated,
+  });
+
+  // Get matched Kalshi tickers for WebSocket subscriptions
+  const kalshiTickers = useMemo(() => 
+    Array.from(matchedKalshiTickersRef.current),
+    [matchedKalshiTickerCount] // Re-compute when count changes
+  );
+
+  // Kalshi WebSocket price update handler
+  const handleKalshiWsPriceUpdate = useCallback((marketTicker: string, prices: KalshiPrices) => {
+    const marketId = `kalshi_${marketTicker}`;
+    const now = prices.lastUpdated;
+
+    setMarkets((prev) =>
+      prev.map((market) => {
+        if (market.id !== marketId) return market;
+
+        return {
+          ...market,
+          sideA: {
+            ...market.sideA,
+            price: prices.yes,
+            probability: prices.yes,
+            odds: prices.yes > 0 ? 1 / prices.yes : null,
+          },
+          sideB: {
+            ...market.sideB,
+            price: prices.no,
+            probability: prices.no,
+            odds: prices.no > 0 ? 1 / prices.no : null,
+          },
+          lastUpdated: now,
+          lastPriceUpdatedAt: now,
+        };
+      })
+    );
+
+    setLastPriceUpdate(new Date());
+    setLastKalshiRefresh(new Date());
+  }, []);
+
+  // Kalshi WebSocket connection for real-time orderbook updates
+  const { 
+    status: kalshiWsStatus, 
+    subscriptionCount: kalshiWsSubscriptionCount, 
+    isConnected: kalshiWsConnected 
+  } = useKalshiWebSocket({
+    marketTickers: kalshiTickers,
+    onPriceUpdate: handleKalshiWsPriceUpdate,
+    enabled: wsEnabled && isAuthenticated && kalshiTickers.length > 0,
   });
 
   // Deferred markets for expensive computations - prevents UI blocking
@@ -1837,6 +1891,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       loadingProgress,
       wsStatus,
       wsSubscriptionCount,
+      kalshiWsStatus,
+      kalshiWsSubscriptionCount,
       isRefreshingKalshi,
       isRefreshingAllPrices,
       lastKalshiRefresh,
@@ -1903,6 +1959,8 @@ export function useMarkets(): MarketsContextType {
     loadingProgress: { loaded: 0, total: 0 },
     wsStatus: 'disconnected',
     wsSubscriptionCount: 0,
+    kalshiWsStatus: 'disconnected',
+    kalshiWsSubscriptionCount: 0,
     isRefreshingKalshi: false,
     isRefreshingAllPrices: false,
     lastKalshiRefresh: null,
