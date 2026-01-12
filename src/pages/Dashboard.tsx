@@ -6,6 +6,7 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { ArbitrageView } from '@/components/dashboard/ArbitrageView';
 import { ArbitrageSettingsPanel } from '@/components/dashboard/ArbitrageSettingsPanel';
+import { ScanStatusWidget } from '@/components/dashboard/ScanStatusWidget';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -15,27 +16,25 @@ export default function DashboardPage() {
   const {
     summary, 
     syncState, 
-    isDiscovering,
     isPriceUpdating, 
-    startDiscovery,
     startPriceUpdates, 
   } = useMarkets();
   const { isLoadingMarkets, loadingProgress } = useMarketsLoading();
   const { settings, updateSettings, resetSettings, defaults } = useArbitrageSettings();
   
-  // Track if we've already started scanning
+  // Track if we've already started price updates
   const hasStartedRef = useRef(false);
 
-  // Auto-start scanning when markets finish loading
+  // Auto-start price updates when markets finish loading
+  // Note: Market discovery is handled by background cron job every 5 minutes
   useEffect(() => {
     if (!isLoadingMarkets && !hasStartedRef.current) {
       hasStartedRef.current = true;
-      startDiscovery();
-      setTimeout(() => startPriceUpdates(), 3000);
+      startPriceUpdates();
     }
-  }, [isLoadingMarkets, startDiscovery, startPriceUpdates]);
+  }, [isLoadingMarkets, startPriceUpdates]);
 
-  const isRunning = isDiscovering || isPriceUpdating;
+  const isRunning = isPriceUpdating;
   const loadPercent = loadingProgress.total > 0 
     ? Math.round((loadingProgress.loaded / loadingProgress.total) * 100) 
     : 0;
@@ -62,6 +61,9 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Background Scan Status */}
+        <ScanStatusWidget />
+
         {/* Status Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 rounded-xl bg-card border shadow-sm">
           <div className="flex items-center gap-3 min-w-0">
@@ -69,9 +71,9 @@ export default function DashboardPage() {
               <Radio className={`w-4 h-4 ${isRunning ? 'text-green-500 animate-pulse' : 'text-muted-foreground'}`} />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-semibold">Market Scanner</h2>
+              <h2 className="text-base sm:text-lg font-semibold">Price Monitor</h2>
               <p className="text-xs sm:text-sm text-muted-foreground truncate">
-                {isLoadingMarkets ? 'Loading markets...' : isRunning ? 'Scanning for arbitrage opportunities...' : 'Starting...'}
+                {isLoadingMarkets ? 'Loading markets...' : isRunning ? 'Monitoring prices in real-time...' : 'Starting...'}
               </p>
             </div>
           </div>
