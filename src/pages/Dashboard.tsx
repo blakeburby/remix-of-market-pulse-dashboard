@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMarkets } from '@/contexts/MarketsContext';
+import { useMarketsLoading } from '@/contexts/MarketsLoadingContext';
 import { useArbitrageSettings } from '@/hooks/useArbitrageSettings';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
@@ -9,7 +10,9 @@ import { ArbitrageView } from '@/components/dashboard/ArbitrageView';
 import { ArbitrageSettingsPanel } from '@/components/dashboard/ArbitrageSettingsPanel';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Play, Pause, Loader2 } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Play, Pause, Loader2, Target, Sparkles, Search } from 'lucide-react';
 
 export default function DashboardPage() {
   const { isAuthenticated, isReady, logout } = useAuth();
@@ -18,13 +21,12 @@ export default function DashboardPage() {
     syncState, 
     isDiscovering,
     isPriceUpdating, 
-    isLoadingMarkets,
-    loadingProgress,
     startDiscovery,
     stopDiscovery,
     startPriceUpdates, 
     stopPriceUpdates 
   } = useMarkets();
+  const { isLoadingMarkets, loadingProgress } = useMarketsLoading();
   const { settings, updateSettings, resetSettings, defaults } = useArbitrageSettings();
   const navigate = useNavigate();
 
@@ -121,8 +123,56 @@ export default function DashboardPage() {
         {/* Summary Cards - shows sync progress */}
         <SummaryCards summary={summary} syncState={syncState} />
         
-        {/* Arbitrage View */}
-        <ArbitrageView />
+        {/* Arbitrage View - Only render when not loading to prevent lag */}
+        {isLoadingMarkets ? (
+          <div className="space-y-4 sm:space-y-6">
+            {/* Skeleton for Scan Coverage Header */}
+            <Card className="border-border bg-gradient-to-r from-muted/50 to-muted/20">
+              <CardContent className="p-3 sm:py-4 sm:px-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3 sm:gap-4">
+                    <Skeleton className="h-9 w-24 rounded-full" />
+                    <Skeleton className="h-9 w-24 rounded-full" />
+                  </div>
+                  <Skeleton className="h-9 w-32 rounded-full" />
+                </div>
+              </CardContent>
+            </Card>
+            
+            {/* Skeleton for Search Bar */}
+            <Card className="border-border bg-card">
+              <CardContent className="p-3 sm:p-4">
+                <Skeleton className="h-9 w-full" />
+              </CardContent>
+            </Card>
+            
+            {/* Skeleton for Opportunities */}
+            <div className="grid gap-3 sm:gap-4">
+              {[1, 2, 3].map(i => (
+                <Skeleton key={i} className="h-48 w-full rounded-xl" />
+              ))}
+            </div>
+            
+            {/* Skeleton for Matched Contracts */}
+            <Card className="mt-6">
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <Target className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
+                  <Skeleton className="h-6 w-40" />
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="grid gap-2 sm:gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  {[1, 2, 3, 4, 5, 6].map(i => (
+                    <Skeleton key={i} className="h-32 w-full rounded-lg" />
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          <ArbitrageView />
+        )}
       </main>
     </div>
   );
