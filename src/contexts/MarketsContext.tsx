@@ -1325,11 +1325,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Load markets from database with pagination (used after cloud scan or on mount)
   const loadMarketsFromDatabase = useCallback(async () => {
+    const allMarkets: UnifiedMarket[] = [];
+    let totalCount = 0;
+    
     try {
       setIsLoadingMarkets(true);
       updateLoadingProgress(0, 0);
       
-      const allMarkets: UnifiedMarket[] = [];
       const PAGE_SIZE = 1000;
       let offset = 0;
       let hasMore = true;
@@ -1340,7 +1342,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         .select('*', { count: 'exact', head: true })
         .eq('status', 'open');
       
-      const totalCount = count || 0;
+      totalCount = count || 0;
       updateLoadingProgress(0, totalCount);
       console.log(`[Load Markets] Total markets to load: ${totalCount}`);
       
@@ -1388,6 +1390,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error('[Load Markets] Error:', error);
     } finally {
+      // Force 100% progress before hiding loader
+      const finalCount = totalCount > 0 ? totalCount : allMarkets.length;
+      updateLoadingProgress(finalCount, finalCount);
       setIsLoadingMarkets(false);
     }
   }, [convertDbRecord, setIsLoadingMarkets, updateLoadingProgress]);
