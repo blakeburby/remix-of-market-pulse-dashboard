@@ -86,11 +86,46 @@ export default {
   				to: {
   					height: '0'
   				}
+  			},
+  			'price-flash-up': {
+  				'0%': { 
+  					transform: 'scale(1)',
+  					color: 'hsl(var(--chart-4))'
+  				},
+  				'50%': { 
+  					transform: 'scale(1.05)',
+  					color: 'hsl(var(--chart-4))'
+  				},
+  				'100%': { 
+  					transform: 'scale(1)',
+  					color: 'inherit'
+  				}
+  			},
+  			'price-flash-down': {
+  				'0%': { 
+  					transform: 'scale(1)',
+  					color: 'hsl(var(--destructive))'
+  				},
+  				'50%': { 
+  					transform: 'scale(1.05)',
+  					color: 'hsl(var(--destructive))'
+  				},
+  				'100%': { 
+  					transform: 'scale(1)',
+  					color: 'inherit'
+  				}
+  			},
+  			'flash-overlay': {
+  				'0%': { opacity: '0.6' },
+  				'100%': { opacity: '0' }
   			}
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
-  			'accordion-up': 'accordion-up 0.2s ease-out'
+  			'accordion-up': 'accordion-up 0.2s ease-out',
+  			'price-flash-up': 'price-flash-up 0.6s ease-out',
+  			'price-flash-down': 'price-flash-down 0.6s ease-out',
+  			'flash-overlay': 'flash-overlay 0.6s ease-out forwards'
   		},
   		fontFamily: {
   			sans: [
