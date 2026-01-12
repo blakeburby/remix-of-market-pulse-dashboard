@@ -45,15 +45,19 @@ export function MarketsLoadingProvider({ children }: { children: React.ReactNode
   }, []);
   
   const handleSetIsLoadingMarkets = useCallback((loading: boolean) => {
-    setIsLoadingMarkets(loading);
-    // When loading completes, ensure final progress is flushed
+    // When loading completes, synchronously flush pending progress FIRST
     if (!loading && pendingProgressRef.current) {
-      setLoadingProgress(pendingProgressRef.current);
+      // Clear any pending throttled update
       if (throttleTimeoutRef.current) {
         clearTimeout(throttleTimeoutRef.current);
         throttleTimeoutRef.current = null;
       }
+      // Set final progress immediately (not throttled) BEFORE hiding loader
+      setLoadingProgress(pendingProgressRef.current);
     }
+    
+    // Now update the loading state
+    setIsLoadingMarkets(loading);
   }, []);
 
   return (
