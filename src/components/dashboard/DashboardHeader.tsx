@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Building2, LogOut, BarChart3, Calculator, Menu } from 'lucide-react';
+import { Building2, BarChart3, Calculator, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
@@ -9,11 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-interface DashboardHeaderProps {
-  onLogout: () => void;
-}
-
-export function DashboardHeader({ onLogout }: DashboardHeaderProps) {
+export function DashboardHeader() {
   const location = useLocation();
   
   const navItems = [
@@ -92,16 +88,6 @@ export function DashboardHeader({ onLogout }: DashboardHeaderProps) {
             })}
           </nav>
         </div>
-
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          onClick={onLogout}
-          className="text-muted-foreground hover:text-foreground h-8 px-2"
-        >
-          <LogOut className="w-4 h-4" />
-          <span className="hidden sm:inline ml-2">Sign Out</span>
-        </Button>
       </div>
     </header>
   );

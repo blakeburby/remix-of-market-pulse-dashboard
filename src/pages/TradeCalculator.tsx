@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,7 +9,6 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ArrowRight, DollarSign, TrendingUp, AlertTriangle } from 'lucide-react';
 
 export default function TradeCalculator() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   
   const [kalshiPrice, setKalshiPrice] = useState<string>('45');
@@ -27,9 +25,6 @@ export default function TradeCalculator() {
     if (polyParam) setPolyPrice(polyParam);
   }, [searchParams]);
 
-  const handleLogout = () => {
-    navigate('/');
-  };
 
   const calculation = useMemo(() => {
     const inputKalshi = parseFloat(kalshiPrice) / 100;
@@ -106,7 +101,7 @@ export default function TradeCalculator() {
 
   return (
     <div className="min-h-screen bg-background">
-      <DashboardHeader onLogout={handleLogout} />
+      <DashboardHeader />
       
       <main className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="mb-8">
