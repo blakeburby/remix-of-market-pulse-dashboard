@@ -1318,6 +1318,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       setMarkets(allMarkets);
       console.log(`[Load Markets] Total: ${allMarkets.length} markets from database`);
       
+      // Trigger price warmup after initial load to fetch prices for matched markets
+      setPendingWarmup(true);
+      
       // Update sync state
       setSyncState(prev => ({
         POLYMARKET: { ...prev.POLYMARKET, lastSuccessAt: new Date() },
