@@ -19,6 +19,7 @@ import { polymarketRateLimiter, kalshiRateLimiter, getCombinedStats, allocateQps
 import { toast } from '@/hooks/use-toast';
 import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
 import { supabase } from '@/integrations/supabase/client';
+import { useMarketsLoading } from './MarketsLoadingContext';
 
 interface MarketsContextType {
   markets: UnifiedMarket[];
@@ -1224,9 +1225,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getApiKey]);
   
-  // Loading state for initial market load
-  const [isLoadingMarkets, setIsLoadingMarkets] = useState(false);
-  const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 });
+  // Use the loading context for throttled progress updates
+  const { 
+    isLoadingMarkets, 
+    loadingProgress, 
+    setIsLoadingMarkets, 
+    updateLoadingProgress 
+  } = useMarketsLoading();
   const hasInitialLoadCompletedRef = useRef(false);
   
   // Convert a database record to UnifiedMarket format
@@ -1268,7 +1273,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const loadMarketsFromDatabase = useCallback(async () => {
     try {
       setIsLoadingMarkets(true);
-      setLoadingProgress({ loaded: 0, total: 0 });
+      updateLoadingProgress(0, 0);
       
       const allMarkets: UnifiedMarket[] = [];
       const PAGE_SIZE = 1000;
@@ -1282,7 +1287,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         .eq('status', 'open');
       
       const totalCount = count || 0;
-      setLoadingProgress({ loaded: 0, total: totalCount });
+      updateLoadingProgress(0, totalCount);
       console.log(`[Load Markets] Total markets to load: ${totalCount}`);
       
       while (hasMore) {
@@ -1307,7 +1312,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         const batch = data.map(record => convertDbRecord(record));
         allMarkets.push(...batch);
         
-        setLoadingProgress({ loaded: allMarkets.length, total: totalCount });
+        updateLoadingProgress(allMarkets.length, totalCount);
         console.log(`[Load Markets] Loaded ${allMarkets.length}/${totalCount} markets...`);
         
         // Check if we got a full page (more might exist)
@@ -1331,7 +1336,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsLoadingMarkets(false);
     }
-  }, [convertDbRecord]);
+  }, [convertDbRecord, setIsLoadingMarkets, updateLoadingProgress]);
   
   // Subscribe to realtime updates from scan_jobs table
   useEffect(() => {

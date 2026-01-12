@@ -13,6 +13,15 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { 
+  Pagination, 
+  PaginationContent, 
+  PaginationItem, 
+  PaginationLink, 
+  PaginationNext, 
+  PaginationPrevious,
+  PaginationEllipsis 
+} from '@/components/ui/pagination';
 import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
 import { MatchDetailsPanel } from './MatchDetailsPanel';
@@ -488,6 +497,8 @@ export function ArbitrageView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [nextRefreshIn, setNextRefreshIn] = useState<number>(0);
+  const [matchesPage, setMatchesPage] = useState(1);
+  const MATCHES_PER_PAGE = 30;
   const autoRefreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -869,7 +880,7 @@ export function ArbitrageView() {
         </Card>
       )}
       
-      {/* Matched Contracts Section */}
+      {/* Matched Contracts Section with Pagination */}
       <Card className="mt-6">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
@@ -887,17 +898,87 @@ export function ArbitrageView() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-0">
+        <CardContent className="pt-0 space-y-4">
           {matches.length > 0 ? (
-            <div className="grid gap-2 sm:gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {matches.map((match) => (
-                <MatchCard 
-                  key={`${match.polymarket.id}-${match.kalshi.id}`}
-                  match={match} 
-                  maxAgeSeconds={settings.maxAgeSeconds}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid gap-2 sm:gap-3 md:grid-cols-2 lg:grid-cols-3">
+                {matches
+                  .slice((matchesPage - 1) * MATCHES_PER_PAGE, matchesPage * MATCHES_PER_PAGE)
+                  .map((match) => (
+                    <MatchCard 
+                      key={`${match.polymarket.id}-${match.kalshi.id}`}
+                      match={match} 
+                      maxAgeSeconds={settings.maxAgeSeconds}
+                    />
+                  ))}
+              </div>
+              
+              {/* Pagination */}
+              {matches.length > MATCHES_PER_PAGE && (
+                <div className="pt-4 border-t border-border">
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <p className="text-xs text-muted-foreground">
+                      Showing {((matchesPage - 1) * MATCHES_PER_PAGE) + 1}-{Math.min(matchesPage * MATCHES_PER_PAGE, matches.length)} of {matches.length}
+                    </p>
+                    <Pagination>
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious 
+                            onClick={() => setMatchesPage(p => Math.max(1, p - 1))}
+                            className={matchesPage === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                          />
+                        </PaginationItem>
+                        
+                        {(() => {
+                          const totalPages = Math.ceil(matches.length / MATCHES_PER_PAGE);
+                          const pages: (number | 'ellipsis')[] = [];
+                          
+                          // Always show first page
+                          pages.push(1);
+                          
+                          // Show ellipsis if needed
+                          if (matchesPage > 3) pages.push('ellipsis');
+                          
+                          // Show pages around current
+                          for (let i = Math.max(2, matchesPage - 1); i <= Math.min(totalPages - 1, matchesPage + 1); i++) {
+                            if (!pages.includes(i)) pages.push(i);
+                          }
+                          
+                          // Show ellipsis if needed
+                          if (matchesPage < totalPages - 2) pages.push('ellipsis');
+                          
+                          // Always show last page
+                          if (totalPages > 1 && !pages.includes(totalPages)) pages.push(totalPages);
+                          
+                          return pages.map((page, idx) => (
+                            <PaginationItem key={idx}>
+                              {page === 'ellipsis' ? (
+                                <PaginationEllipsis />
+                              ) : (
+                                <PaginationLink
+                                  onClick={() => setMatchesPage(page)}
+                                  isActive={matchesPage === page}
+                                  className="cursor-pointer"
+                                >
+                                  {page}
+                                </PaginationLink>
+                              )}
+                            </PaginationItem>
+                          ));
+                        })()}
+                        
+                        <PaginationItem>
+                          <PaginationNext 
+                            onClick={() => setMatchesPage(p => Math.min(Math.ceil(matches.length / MATCHES_PER_PAGE), p + 1))}
+                            className={matchesPage >= Math.ceil(matches.length / MATCHES_PER_PAGE) ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="py-8 text-center">
               <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-muted flex items-center justify-center">
