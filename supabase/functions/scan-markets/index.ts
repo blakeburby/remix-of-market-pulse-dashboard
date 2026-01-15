@@ -175,6 +175,24 @@ function convertKalshiMarket(market: KalshiMarket) {
   };
 }
 
+// Delete all existing markets for a platform before inserting fresh data
+async function clearPlatformMarkets(
+  platform: "POLYMARKET" | "KALSHI",
+  supabase: any
+): Promise<void> {
+  console.log(`[${platform}] Clearing existing markets...`);
+  const { error } = await supabase
+    .from("markets")
+    .delete()
+    .eq("platform", platform);
+  
+  if (error) {
+    console.error(`[${platform}] Delete error:`, error);
+    throw error;
+  }
+  console.log(`[${platform}] Cleared existing markets`);
+}
+
 async function fetchAndInsertPlatformMarkets(
   platform: "POLYMARKET" | "KALSHI",
   apiKey: string,
@@ -192,6 +210,9 @@ async function fetchAndInsertPlatformMarkets(
   const endTimeFilter = Math.floor((Date.now() + END_TIME_WINDOW_DAYS * 24 * 60 * 60 * 1000) / 1000);
   
   try {
+    // Delete all existing markets for this platform FIRST
+    await clearPlatformMarkets(platform, supabase);
+    
     // Probe for total with end_time filter
     const probeUrl = `${baseUrl}?status=open&end_time_lte=${endTimeFilter}&limit=1`;
     console.log(`[${platform}] Probing: ${probeUrl}`);
@@ -240,19 +261,16 @@ async function fetchAndInsertPlatformMarkets(
       
       if (markets.length === 0) continue;
       
-      // Convert and insert immediately
+      // Convert and insert immediately (using insert instead of upsert since we deleted first)
       const records = platform === "POLYMARKET"
         ? markets.map(convertPolymarketMarket)
         : markets.map(convertKalshiMarket);
       
-      // Upsert this batch
-      const { error } = await supabase.from("markets").upsert(records, {
-        onConflict: "id",
-        ignoreDuplicates: false,
-      });
+      // Insert this batch (no conflict handling needed since we deleted first)
+      const { error } = await supabase.from("markets").insert(records);
       
       if (error) {
-        console.error(`[${platform}] Upsert error:`, error);
+        console.error(`[${platform}] Insert error:`, error);
       } else {
         totalInserted += records.length;
       }
