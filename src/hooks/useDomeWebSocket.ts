@@ -48,7 +48,13 @@ export function useDomeWebSocket({
     // We'll put all markets in a single subscription if possible
     const maxMarketsPerSub = tier === 'free' ? 5 : 100;
     const maxTotalMarkets = maxSubscriptions * maxMarketsPerSub;
-    const limitedSlugs = slugs.slice(0, maxTotalMarkets);
+    
+    // Safety cap to prevent UI freezes - never subscribe to more than 2000 markets
+    const SAFETY_CAP = 2000;
+    const cappedTotal = Math.min(maxTotalMarkets, SAFETY_CAP);
+    const limitedSlugs = slugs.slice(0, cappedTotal);
+    
+    console.log(`[WS] Subscribing to ${limitedSlugs.length} markets (capped from ${slugs.length}, tier: ${tier})`);
     
     // For free tier, just use 1 subscription to avoid limit issues
     const numSubs = tier === 'free' ? 1 : Math.min(Math.ceil(limitedSlugs.length / maxMarketsPerSub), maxSubscriptions);
