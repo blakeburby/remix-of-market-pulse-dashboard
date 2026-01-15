@@ -384,7 +384,7 @@ Deno.serve(async (req) => {
       );
     }
     
-    // Clean up stale running jobs (running for more than 5 minutes)
+// Clean up stale running jobs (running for more than 5 minutes)
     const { data: staleJobs } = await supabase
       .from("scan_jobs")
       .select("id")
@@ -402,6 +402,29 @@ Deno.serve(async (req) => {
         })
         .eq("status", "running")
         .lt("started_at", fiveMinutesAgo);
+    }
+    
+    // Clean up old scan jobs, keeping only the last 100
+    const KEEP_JOBS_COUNT = 100;
+    const { data: oldJobs } = await supabase
+      .from("scan_jobs")
+      .select("id, created_at")
+      .order("created_at", { ascending: false })
+      .range(KEEP_JOBS_COUNT, KEEP_JOBS_COUNT + 1000);
+    
+    if (oldJobs && oldJobs.length > 0) {
+      const oldJobIds = oldJobs.map((j: { id: string }) => j.id);
+      console.log(`[scan-markets] Deleting ${oldJobIds.length} old scan jobs`);
+      const { error: deleteError } = await supabase
+        .from("scan_jobs")
+        .delete()
+        .in("id", oldJobIds);
+      
+      if (deleteError) {
+        console.error("[scan-markets] Error deleting old jobs:", deleteError);
+      } else {
+        console.log(`[scan-markets] Deleted ${oldJobIds.length} old scan jobs`);
+      }
     }
     
     // Create scan job
