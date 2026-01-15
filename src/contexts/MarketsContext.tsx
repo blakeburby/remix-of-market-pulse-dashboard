@@ -132,30 +132,41 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isPriceUpdating, setIsPriceUpdating] = useState(false);
 
-  // Get market slugs for WebSocket subscriptions - no limit
-  const polymarketSlugs = useMemo(() => 
-    markets
-      .filter(m => m.platform === 'POLYMARKET' && m.marketSlug)
-      .map(m => m.marketSlug!),
-    [markets]
-  );
+  // Get market slugs for WebSocket subscriptions - ONLY matched markets to prevent UI freeze
+  const polymarketSlugs = useMemo(() => {
+    // Only subscribe to matched markets (the ones with arbitrage opportunities)
+    if (matchedPolymarketIds.size === 0) return [];
+    
+    return markets
+      .filter(m => m.platform === 'POLYMARKET' && m.marketSlug && matchedPolymarketIds.has(m.id))
+      .map(m => m.marketSlug!);
+  }, [markets, matchedPolymarketIds]); // Re-compute when matched IDs change
 
-  // WebSocket price update handler
+  // Build a token-to-market index for O(1) lookup in price updates
+  const tokenToMarketIndex = useMemo(() => {
+    const map = new Map<string, { marketId: string; side: 'A' | 'B' }>();
+    for (const market of markets) {
+      if (market.sideA.tokenId) map.set(market.sideA.tokenId, { marketId: market.id, side: 'A' });
+      if (market.sideB.tokenId) map.set(market.sideB.tokenId, { marketId: market.id, side: 'B' });
+    }
+    return map;
+  }, [markets]);
+
+  // WebSocket price update handler - optimized with O(1) lookup
   const handleWsPriceUpdate = useCallback((tokenId: string, price: number, timestamp: number) => {
+    const indexEntry = tokenToMarketIndex.get(tokenId);
+    if (!indexEntry) return; // Token not found, skip entirely
+
+    const { marketId, side } = indexEntry;
     const priceUpdatedAt = new Date(timestamp * 1000);
 
-    // IMPORTANT: update ONLY the token that changed.
-    // Polymarket YES/NO token prices are not guaranteed to sum to 1, so we must not force a complement.
     setMarkets((prev) =>
       prev.map((market) => {
-        const isSideA = market.sideA.tokenId === tokenId;
-        const isSideB = market.sideB.tokenId === tokenId;
-
-        if (!isSideA && !isSideB) return market;
+        if (market.id !== marketId) return market; // Fast skip - O(1) comparison
 
         return {
           ...market,
-          sideA: isSideA
+          sideA: side === 'A'
             ? {
                 ...market.sideA,
                 price,
@@ -163,7 +174,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
                 odds: price > 0 ? 1 / price : null,
               }
             : market.sideA,
-          sideB: isSideB
+          sideB: side === 'B'
             ? {
                 ...market.sideB,
                 price,
@@ -172,22 +183,21 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
               }
             : market.sideB,
           lastUpdated: priceUpdatedAt,
-          // Treat WS updates as fresh price updates for freshness filtering.
           lastPriceUpdatedAt: priceUpdatedAt,
         };
       })
     );
 
     setLastPriceUpdate(new Date());
-  }, []);
+  }, [tokenToMarketIndex]);
 
-  // WebSocket connection for Polymarket
+  // WebSocket connection for Polymarket - only connect when we have matched markets
   const { status: wsStatus, subscriptionCount: wsSubscriptionCount, isConnected: wsConnected } = useDomeWebSocket({
     apiKey: getApiKey(),
     tier,
     marketSlugs: polymarketSlugs,
     onPriceUpdate: handleWsPriceUpdate,
-    enabled: wsEnabled && isAuthenticated,
+    enabled: wsEnabled && isAuthenticated && polymarketSlugs.length > 0,
   });
 
   // Get matched Kalshi tickers for WebSocket subscriptions
