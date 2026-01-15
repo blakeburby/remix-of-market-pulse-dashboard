@@ -33,13 +33,28 @@ async function createKalshiJWT(apiKeyId: string, privateKeyPem: string): Promise
   const payloadB64 = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
   const message = `${headerB64}.${payloadB64}`;
 
-  // Parse PEM private key
-  const pemContents = privateKeyPem
+  // Handle escaped newlines (common when storing PEM in env vars)
+  let normalizedKey = privateKeyPem.replace(/\\n/g, '\n');
+  
+  console.log('[Kalshi WS Proxy] Key starts with:', normalizedKey.substring(0, 30));
+
+  // Parse PEM private key - handle both PKCS#8 and PKCS#1 formats
+  const pemContents = normalizedKey
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
     .replace(/-----BEGIN RSA PRIVATE KEY-----/g, '')
     .replace(/-----END RSA PRIVATE KEY-----/g, '')
     .replace(/\s/g, '');
+
+  // Validate base64 content before attempting decode
+  const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+  if (!base64Regex.test(pemContents)) {
+    console.error('[Kalshi WS Proxy] Invalid base64 in private key.');
+    console.error('[Kalshi WS Proxy] First 50 chars after stripping headers:', pemContents.substring(0, 50));
+    throw new Error('Private key contains invalid base64 characters. Please re-enter the key with proper PEM format.');
+  }
+
+  console.log('[Kalshi WS Proxy] Private key parsed successfully, base64 length:', pemContents.length);
 
   const binaryKey = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
 
