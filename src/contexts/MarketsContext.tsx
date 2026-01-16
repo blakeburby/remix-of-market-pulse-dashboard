@@ -1333,8 +1333,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     lastPriceUpdatedAt: record.last_price_updated_at ? new Date(record.last_price_updated_at) : null,
   }), []);
 
-  // Load markets from database with pagination (used after cloud scan or on mount)
+  // Load markets from database with STABLE CURSOR pagination (prevents stuck loops during active scans)
   const loadMarketsFromDatabase = useCallback(async () => {
+    const seenIds = new Set<string>();
     const allMarkets: UnifiedMarket[] = [];
     let totalCount = 0;
     
@@ -1343,26 +1344,50 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       updateLoadingProgress(0, 0);
       
       const PAGE_SIZE = 1000;
-      let offset = 0;
-      let hasMore = true;
+      const MAX_PAGES = 100; // Safety limit
+      const MAX_TIME_MS = 90000; // 90 second timeout
+      const startTime = Date.now();
       
-      // First, get total count
+      // Capture a stable snapshot cutoff (only load rows created before now)
+      const cutoff = new Date().toISOString();
+      
+      // First, get total count for progress (approximate, may change during scan)
       const { count } = await supabase
         .from('markets')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'open');
+        .eq('status', 'open')
+        .lte('created_at', cutoff);
       
       totalCount = count || 0;
       updateLoadingProgress(0, totalCount);
-      console.log(`[Load Markets] Total markets to load: ${totalCount}`);
+      console.log(`[Load Markets] Total markets to load (snapshot): ${totalCount}`);
       
-      while (hasMore) {
-        const { data, error } = await supabase
+      // Cursor-based pagination: order by (created_at, id) for stability
+      let lastCreatedAt: string | null = null;
+      let lastId: string | null = null;
+      let pageCount = 0;
+      let hasMore = true;
+      
+      while (hasMore && pageCount < MAX_PAGES && (Date.now() - startTime) < MAX_TIME_MS) {
+        pageCount++;
+        
+        // Build query with cursor
+        let query = supabase
           .from('markets')
           .select('*')
           .eq('status', 'open')
-          .order('end_time', { ascending: true })
-          .range(offset, offset + PAGE_SIZE - 1);
+          .lte('created_at', cutoff)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE);
+        
+        // Apply cursor if we have one
+        if (lastCreatedAt && lastId) {
+          // Keyset pagination: (created_at, id) > (lastCreatedAt, lastId)
+          query = query.or(`created_at.gt.${lastCreatedAt},and(created_at.eq.${lastCreatedAt},id.gt.${lastId})`);
+        }
+        
+        const { data, error } = await query;
         
         if (error) {
           console.error('[Load Markets] Error:', error);
@@ -1374,20 +1399,41 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           break;
         }
         
-        // Convert and accumulate
-        const batch = data.map(record => convertDbRecord(record));
-        allMarkets.push(...batch);
+        // Convert and accumulate with deduplication
+        let newCount = 0;
+        for (const record of data) {
+          if (!seenIds.has(record.id)) {
+            seenIds.add(record.id);
+            allMarkets.push(convertDbRecord(record));
+            newCount++;
+          }
+        }
         
-        updateLoadingProgress(allMarkets.length, totalCount);
-        console.log(`[Load Markets] Loaded ${allMarkets.length}/${totalCount} markets...`);
+        // Update cursor for next page
+        const lastRecord = data[data.length - 1];
+        lastCreatedAt = lastRecord.created_at;
+        lastId = lastRecord.id;
         
-        // Check if we got a full page (more might exist)
+        // Progress: clamp to prevent >100%
+        const displayLoaded = Math.min(allMarkets.length, totalCount || allMarkets.length);
+        const displayTotal = Math.max(totalCount, allMarkets.length);
+        updateLoadingProgress(displayLoaded, displayTotal);
+        console.log(`[Load Markets] Page ${pageCount}: +${newCount} new, total=${allMarkets.length}/${displayTotal}`);
+        
+        // If we got fewer than PAGE_SIZE, we've reached the end
         hasMore = data.length === PAGE_SIZE;
-        offset += PAGE_SIZE;
+      }
+      
+      // Safety exit logging
+      if (pageCount >= MAX_PAGES) {
+        console.warn('[Load Markets] Hit max page limit, finalizing with current results');
+      }
+      if ((Date.now() - startTime) >= MAX_TIME_MS) {
+        console.warn('[Load Markets] Hit timeout, finalizing with current results');
       }
       
       setMarkets(allMarkets);
-      console.log(`[Load Markets] Total: ${allMarkets.length} markets from database`);
+      console.log(`[Load Markets] Complete: ${allMarkets.length} markets from database in ${pageCount} pages`);
       
       // Trigger price warmup after initial load to fetch prices for matched markets
       setPendingWarmup(true);
@@ -1401,7 +1447,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       console.error('[Load Markets] Error:', error);
     } finally {
       // Force 100% progress before hiding loader
-      const finalCount = totalCount > 0 ? totalCount : allMarkets.length;
+      const finalCount = Math.max(totalCount, allMarkets.length);
       updateLoadingProgress(finalCount, finalCount);
       setIsLoadingMarkets(false);
     }

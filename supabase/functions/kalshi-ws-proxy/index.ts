@@ -14,6 +14,54 @@ function base64UrlEncode(data: Uint8Array): string {
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
+// PKCS#1 to PKCS#8 wrapper: wraps an RSA private key in PKCS#8 ASN.1 structure
+// This allows crypto.subtle.importKey('pkcs8', ...) to accept PKCS#1 keys
+function wrapPkcs1ToPkcs8(pkcs1Der: Uint8Array): Uint8Array {
+  // PKCS#8 header for RSA (OID 1.2.840.113549.1.1.1 with NULL params)
+  // SEQUENCE { INTEGER(0), SEQUENCE { OID, NULL }, OCTET STRING { pkcs1Key } }
+  const oid = new Uint8Array([
+    0x30, 0x0d,             // SEQUENCE (13 bytes)
+    0x06, 0x09,             // OID (9 bytes)
+    0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, // rsaEncryption
+    0x05, 0x00              // NULL
+  ]);
+  
+  // Build length bytes for OCTET STRING containing PKCS#1 key
+  const octetStringContent = pkcs1Der;
+  const octetStringHeader = buildAsn1LengthBytes(0x04, octetStringContent.length);
+  
+  // Version INTEGER(0)
+  const version = new Uint8Array([0x02, 0x01, 0x00]);
+  
+  // Inner content: version + algorithm OID + octet string with key
+  const innerLength = version.length + oid.length + octetStringHeader.length + octetStringContent.length;
+  const outerHeader = buildAsn1LengthBytes(0x30, innerLength);
+  
+  // Assemble final PKCS#8 structure
+  const result = new Uint8Array(outerHeader.length + version.length + oid.length + octetStringHeader.length + octetStringContent.length);
+  let offset = 0;
+  result.set(outerHeader, offset); offset += outerHeader.length;
+  result.set(version, offset); offset += version.length;
+  result.set(oid, offset); offset += oid.length;
+  result.set(octetStringHeader, offset); offset += octetStringHeader.length;
+  result.set(octetStringContent, offset);
+  
+  return result;
+}
+
+// Build ASN.1 tag + length prefix
+function buildAsn1LengthBytes(tag: number, length: number): Uint8Array {
+  if (length < 128) {
+    return new Uint8Array([tag, length]);
+  } else if (length < 256) {
+    return new Uint8Array([tag, 0x81, length]);
+  } else if (length < 65536) {
+    return new Uint8Array([tag, 0x82, (length >> 8) & 0xff, length & 0xff]);
+  } else {
+    return new Uint8Array([tag, 0x83, (length >> 16) & 0xff, (length >> 8) & 0xff, length & 0xff]);
+  }
+}
+
 // Create JWT for Kalshi authentication
 async function createKalshiJWT(apiKeyId: string, privateKeyPem: string): Promise<string> {
   // JWT Header
@@ -36,9 +84,17 @@ async function createKalshiJWT(apiKeyId: string, privateKeyPem: string): Promise
   // Handle escaped newlines (common when storing PEM in env vars)
   let normalizedKey = privateKeyPem.replace(/\\n/g, '\n');
   
-  console.log('[Kalshi WS Proxy] Key starts with:', normalizedKey.substring(0, 30));
+  // Detect key format
+  const isPkcs8 = normalizedKey.includes('-----BEGIN PRIVATE KEY-----');
+  const isPkcs1 = normalizedKey.includes('-----BEGIN RSA PRIVATE KEY-----');
+  
+  console.log('[Kalshi WS Proxy] Key format detected:', isPkcs8 ? 'PKCS#8' : isPkcs1 ? 'PKCS#1' : 'Unknown');
 
-  // Parse PEM private key - handle both PKCS#8 and PKCS#1 formats
+  if (!isPkcs8 && !isPkcs1) {
+    throw new Error('Private key must be in PEM format (PKCS#8 or PKCS#1). Please check your key starts with -----BEGIN PRIVATE KEY----- or -----BEGIN RSA PRIVATE KEY-----');
+  }
+
+  // Parse PEM private key - strip headers and whitespace
   const pemContents = normalizedKey
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
@@ -56,16 +112,35 @@ async function createKalshiJWT(apiKeyId: string, privateKeyPem: string): Promise
 
   console.log('[Kalshi WS Proxy] Private key parsed successfully, base64 length:', pemContents.length);
 
-  const binaryKey = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+  let binaryKey: Uint8Array = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+  
+  // If PKCS#1, wrap to PKCS#8 for crypto.subtle compatibility
+  if (isPkcs1) {
+    console.log('[Kalshi WS Proxy] Wrapping PKCS#1 key to PKCS#8 format...');
+    const wrapped = wrapPkcs1ToPkcs8(binaryKey);
+    binaryKey = new Uint8Array(wrapped);
+    console.log('[Kalshi WS Proxy] PKCS#8 wrapped key size:', binaryKey.length);
+  }
 
-  // Import the private key
-  const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8',
-    binaryKey,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  // Import the private key (always as PKCS#8 now)
+  let cryptoKey: CryptoKey;
+  try {
+    // Create a fresh ArrayBuffer copy for crypto.subtle compatibility
+    const keyBuffer = new ArrayBuffer(binaryKey.length);
+    new Uint8Array(keyBuffer).set(binaryKey);
+    
+    cryptoKey = await crypto.subtle.importKey(
+      'pkcs8',
+      keyBuffer,
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    console.log('[Kalshi WS Proxy] Key imported successfully');
+  } catch (importError) {
+    console.error('[Kalshi WS Proxy] Key import failed:', importError);
+    throw new Error(`Failed to import private key: ${importError instanceof Error ? importError.message : String(importError)}. Please verify your KALSHI_PRIVATE_KEY is a valid RSA private key in PEM format.`);
+  }
 
   // Sign the message
   const signature = await crypto.subtle.sign(
@@ -93,7 +168,10 @@ serve(async (req) => {
 
   if (!apiKeyId || !privateKey) {
     console.error('[Kalshi WS Proxy] Missing KALSHI_API_KEY_ID or KALSHI_PRIVATE_KEY');
-    return new Response(JSON.stringify({ error: 'Kalshi credentials not configured' }), { 
+    return new Response(JSON.stringify({ 
+      type: 'error', 
+      message: 'Kalshi credentials not configured. Please add KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY secrets.' 
+    }), { 
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
@@ -123,7 +201,6 @@ serve(async (req) => {
       console.log('[Kalshi WS Proxy] JWT created successfully');
 
       // Connect to Kalshi's production WebSocket with auth
-      // Kalshi uses bearer token in Authorization header for WS
       kalshiSocket = new WebSocket('wss://api.elections.kalshi.com/trade-api/ws/v2');
 
       kalshiSocket.onopen = () => {
@@ -177,7 +254,7 @@ serve(async (req) => {
       console.error('[Kalshi WS Proxy] Failed to connect to Kalshi:', error);
       if (clientSocket.readyState === WebSocket.OPEN) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        clientSocket.send(JSON.stringify({ type: 'error', message: `Connection failed: ${errorMessage}` }));
+        clientSocket.send(JSON.stringify({ type: 'error', message: errorMessage }));
       }
     }
   };

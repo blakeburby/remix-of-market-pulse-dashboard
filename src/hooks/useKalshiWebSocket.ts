@@ -106,7 +106,7 @@ export function useKalshiWebSocket({
   }, [subscribeToMarket]);
 
   // Handle incoming messages
-  const handleMessage = useCallback((data: KalshiMessage) => {
+  const handleMessage = useCallback((data: KalshiMessage & { message?: string }) => {
     // Handle proxy status messages
     if (data.type === 'connected') {
       console.log('[Kalshi WS] Proxy connected, awaiting authentication');
@@ -115,8 +115,10 @@ export function useKalshiWebSocket({
     }
 
     if (data.type === 'error') {
-      console.error('[Kalshi WS] Proxy error:', data);
-      setError(data.error?.msg || 'Unknown error');
+      // Handle error message from proxy (uses 'message' field, not 'error.msg')
+      const errorMsg = data.message || data.error?.msg || 'Unknown error';
+      console.error('[Kalshi WS] Proxy error:', errorMsg);
+      setError(errorMsg);
       setStatus('error');
       return;
     }
