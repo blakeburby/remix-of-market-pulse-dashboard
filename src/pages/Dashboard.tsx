@@ -39,7 +39,6 @@ export default function DashboardPage() {
       <DashboardHeader />
       
       <main className="container mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-3 sm:space-y-5">
-
         {/* Status Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 rounded-xl bg-card border shadow-sm">
           <div className="flex items-center gap-3 min-w-0">
