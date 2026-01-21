@@ -121,8 +121,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [pendingWarmup, setPendingWarmup] = useState(false);
   const isWarmingUpRef = useRef(false);
   
-  // Cloud scanning state
-  const [useCloudScanning, setUseCloudScanning] = useState(true); // Default to cloud
+  // Cloud scanning state - DISABLED: Client-only mode for reliability
+  const [useCloudScanning, setUseCloudScanning] = useState(false); // Client-only mode
   const [cloudScanJobId, setCloudScanJobId] = useState<string | null>(null);
 
   // Batched price updates - accumulate updates and flush every 500ms to reduce re-renders
@@ -841,26 +841,31 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
             return updated;
           });
 
-          // Continuously update markets after each page
-          setMarkets(prev => {
-            const existing = new Map(prev.map(m => [m.id, m]));
-            for (const market of pageMarkets) {
-              const prevMarket = existing.get(market.id);
-              if (prevMarket && prevMarket.platform === platform) {
-                existing.set(market.id, {
-                  ...market,
-                  sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
-                  sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
-                  lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
-                });
-              } else {
-                existing.set(market.id, market);
+          // OPTIMIZATION: Batch state updates every 5 pages to reduce re-renders
+          const BATCH_INTERVAL = 5;
+          if (pagesCompleted % BATCH_INTERVAL === 0 || !hasMore || hitEmptyPage) {
+            setMarkets(prev => {
+              const existing = new Map(prev.map(m => [m.id, m]));
+              for (const market of allMarkets) {
+                const prevMarket = existing.get(market.id);
+                if (prevMarket && prevMarket.platform === platform) {
+                  existing.set(market.id, {
+                    ...market,
+                    sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
+                    sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
+                    lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
+                  });
+                } else {
+                  existing.set(market.id, market);
+                }
               }
-            }
-            return Array.from(existing.values());
-          });
+              return Array.from(existing.values());
+            });
+          }
 
-          console.log(`[Discovery] ${platform}: page=${index + 1}/${totalPages} found=${allMarkets.length}`);
+          if (pagesCompleted % 10 === 0) {
+            console.log(`[Discovery] ${platform}: page=${index + 1}/${totalPages} found=${allMarkets.length}`);
+          }
         } catch (error) {
           if ((error as Error).message !== 'Aborted') {
             console.error(`[Discovery] ${platform} page ${index} error:`, error);
