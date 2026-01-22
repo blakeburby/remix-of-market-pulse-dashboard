@@ -59,6 +59,10 @@ export interface KalshiMarket {
   close_time: number;
   status: MarketStatus;
   last_price: number; // in cents (0-100)
+  yes_ask?: number; // best ask price in cents (0-100)
+  yes_bid?: number; // best bid price in cents (0-100)
+  no_ask?: number;
+  no_bid?: number;
   volume: number;
   volume_24h: number;
 }
