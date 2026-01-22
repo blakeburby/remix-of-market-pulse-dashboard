@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import { cn } from '@/lib/utils';
 
 interface PriceFlashProps {
@@ -8,13 +8,16 @@ interface PriceFlashProps {
   showDirection?: boolean;
 }
 
+// Minimum price change threshold to trigger animation (0.5%)
+const PRICE_CHANGE_THRESHOLD = 0.005;
+
 /**
- * A component that displays a price with a flash animation when it changes.
- * - Green flash when price increases
- * - Red flash when price decreases
- * - Subtle pulse for any change
+ * A component that displays a price with a flash animation when it changes significantly.
+ * - Green flash when price increases by more than 0.5%
+ * - Red flash when price decreases by more than 0.5%
+ * - Memoized to prevent unnecessary re-renders
  */
-export function PriceFlash({ 
+export const PriceFlash = memo(function PriceFlash({ 
   price, 
   format = (p) => `$${p.toFixed(2)}`,
   className = '',
@@ -31,21 +34,26 @@ export function PriceFlash({
       return;
     }
 
-    // Detect price direction
     const prevPrice = prevPriceRef.current;
-    if (price !== prevPrice) {
-      const direction = price > prevPrice ? 'up' : 'down';
-      setFlashState(direction);
+    
+    // Only animate if price changed significantly (>0.5%)
+    if (price !== prevPrice && prevPrice > 0) {
+      const percentChange = Math.abs((price - prevPrice) / prevPrice);
+      
+      if (percentChange >= PRICE_CHANGE_THRESHOLD) {
+        const direction = price > prevPrice ? 'up' : 'down';
+        setFlashState(direction);
 
-      // Clear any existing timeout
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
+        // Clear any existing timeout
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+        }
+
+        // Reset flash after animation completes
+        timeoutRef.current = setTimeout(() => {
+          setFlashState('none');
+        }, 600);
       }
-
-      // Reset flash after animation completes
-      timeoutRef.current = setTimeout(() => {
-        setFlashState('none');
-      }, 600);
     }
 
     prevPriceRef.current = price;
@@ -95,4 +103,4 @@ export function PriceFlash({
       )}
     </span>
   );
-}
+});
