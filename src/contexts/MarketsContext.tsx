@@ -9,6 +9,7 @@ import {
   KalshiMarket,
   PolymarketMarketsResponse,
   KalshiMarketsResponse,
+  KalshiMarketPriceResponse,
   PolymarketPriceResponse,
   GroupedEvent,
   DiscoveryProgress,
@@ -1679,35 +1680,25 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           const safeTicker = encodeURIComponent(ticker);
 
           try {
-            const url = `https://api.domeapi.io/v1/kalshi/markets?market_ticker=${safeTicker}&limit=1`;
+            // Use dedicated market-price endpoint for faster, more accurate real-time prices
+            const url = `https://api.domeapi.io/v1/kalshi/market-price/${safeTicker}`;
             const response = await rateLimitedFetch(url, apiKey, 'KALSHI');
-            const data: KalshiMarketsResponse = await response.json();
-            const market = data.markets?.find((m) => m.market_ticker === ticker) ?? data.markets?.[0];
-
-            // Try last_price first, fall back to yes_ask (best ask price)
-            const lastPrice = market?.last_price;
-            const yesAsk = market?.yes_ask;
             
-            let priceToUse: number | undefined;
-            if (typeof lastPrice === 'number' && lastPrice > 0) {
-              priceToUse = lastPrice;
-            } else if (typeof yesAsk === 'number' && yesAsk > 0) {
-              // Use ask price as fallback when no trades have occurred
-              priceToUse = yesAsk;
-              console.log(`[Kalshi Fetch] ${ticker}: Using yes_ask=${yesAsk} (no trades yet)`);
-            }
-            
-            if (!priceToUse) {
-              console.log(`[Kalshi Fetch] ${ticker}: No price available (last_price=${lastPrice}, yes_ask=${yesAsk})`);
+            if (!response.ok) {
+              // 404 = market not found or no price data
               continue;
             }
-
-            const yesProb = priceToUse / 100;
-            toUpdate.set(`kalshi_${ticker}`, {
-              yes: yesProb,
-              no: 1 - yesProb,
-            });
-            console.log(`[Kalshi Fetch] ${ticker}: yes=${yesProb.toFixed(2)}, no=${(1 - yesProb).toFixed(2)}`);
+            
+            const data: KalshiMarketPriceResponse = await response.json();
+            
+            // Response format: { yes: { price: 0.75, at_time: ... }, no: { price: 0.25, at_time: ... } }
+            if (data.yes?.price !== undefined && data.no?.price !== undefined) {
+              toUpdate.set(`kalshi_${ticker}`, {
+                yes: data.yes.price,  // Already in 0-1 range (dollars)
+                no: data.no.price,
+              });
+              console.log(`[Kalshi Price] ${ticker}: yes=${data.yes.price.toFixed(2)}, no=${data.no.price.toFixed(2)}`);
+            }
           } catch {
             // ignore individual ticker failures
           }
