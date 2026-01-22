@@ -792,6 +792,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
                       sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
                       sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
                       lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
+                      // CRITICAL: Preserve price timestamp so prices don't get wiped by discovery
+                      lastPriceUpdatedAt: prevMarket.lastPriceUpdatedAt ?? market.lastPriceUpdatedAt,
                     });
                   } else {
                     existing.set(market.id, market);
@@ -892,6 +894,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
                       sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
                       sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
                       lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
+                      // CRITICAL: Preserve price timestamp so prices don't get wiped by discovery
+                      lastPriceUpdatedAt: prevMarket.lastPriceUpdatedAt ?? market.lastPriceUpdatedAt,
                     });
                   } else {
                     existing.set(market.id, market);

@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import { useMarkets } from '@/contexts/MarketsContext';
 import { findMatchingMarkets, findArbitrageOpportunities } from '@/lib/arbitrage-matcher';
 import { CrossPlatformMatch, ArbitrageOpportunity, UnifiedMarket } from '@/types/dome';
@@ -229,14 +229,28 @@ export function useArbitrage(): UseArbitrageResult {
     };
   }, [markets, settings]);
   
+  // Track previous match signature to avoid redundant fetch triggers
+  const prevMatchSignatureRef = useRef<string>('');
+  
   // Update matched IDs for priority price fetching and trigger immediate fetch
   useEffect(() => {
-    setMatchedPolymarketIds(result.matchedPolyIds);
-    setMatchedKalshiTickers(result.matchedKalshiTickers);
+    // Create stable signature from sorted IDs
+    const polyIds = Array.from(result.matchedPolyIds).sort().join(',');
+    const kalshiTickers = Array.from(result.matchedKalshiTickers).sort().join(',');
+    const currentSignature = `${polyIds}|${kalshiTickers}`;
     
-    // Trigger immediate price fetch for newly matched markets
-    if (result.matchedPolyIds.size > 0 || result.matchedKalshiTickers.size > 0) {
-      triggerImmediatePriceFetch();
+    // Only update and trigger fetch if match set actually changed
+    if (currentSignature !== prevMatchSignatureRef.current) {
+      prevMatchSignatureRef.current = currentSignature;
+      
+      setMatchedPolymarketIds(result.matchedPolyIds);
+      setMatchedKalshiTickers(result.matchedKalshiTickers);
+      
+      // Trigger immediate price fetch for newly matched markets
+      if (result.matchedPolyIds.size > 0 || result.matchedKalshiTickers.size > 0) {
+        console.log('[useArbitrage] Match set changed, triggering immediate price fetch');
+        triggerImmediatePriceFetch();
+      }
     }
   }, [result.matchedPolyIds, result.matchedKalshiTickers, setMatchedPolymarketIds, setMatchedKalshiTickers, triggerImmediatePriceFetch]);
   
