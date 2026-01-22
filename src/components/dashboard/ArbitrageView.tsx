@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { 
   Pagination, 
   PaginationContent, 
@@ -25,7 +26,10 @@ import { ArbitrageOpportunity, CrossPlatformMatch } from '@/types/dome';
 import { formatCents, formatProfitPercent } from '@/lib/arbitrage-matcher';
 import { MatchDetailsPanel } from './MatchDetailsPanel';
 import { PriceFlash } from './PriceFlash';
-import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check, Star, Filter, X } from 'lucide-react';
+import { TradeFlowDiagram } from './TradeFlowDiagram';
+import { OutcomeScenarios } from './OutcomeScenarios';
+import { MiniCalculator } from './MiniCalculator';
+import { ExternalLink, TrendingUp, AlertCircle, Target, Clock, RefreshCw, Zap, Timer, ArrowUpDown, Calculator, Search, CheckCircle2, ArrowRight, DollarSign, Percent, Sparkles, AlertTriangle, Copy, Check, Star, Filter, X, ChevronDown, ChevronUp, Flame } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
@@ -141,6 +145,25 @@ const RefreshCountdown = memo(function RefreshCountdown({
   );
 });
 
+// Get profit tier label and icon
+function getProfitTier(percent: number): { label: string; icon: React.ReactNode; className: string } {
+  if (percent >= 5) return { 
+    label: 'High Yield', 
+    icon: <Flame className="w-3 h-3" />, 
+    className: 'text-chart-4 bg-chart-4/10 border-chart-4/30' 
+  };
+  if (percent >= 2) return { 
+    label: 'Good', 
+    icon: <CheckCircle2 className="w-3 h-3" />, 
+    className: 'text-chart-4 bg-chart-4/10 border-chart-4/20' 
+  };
+  return { 
+    label: 'Marginal', 
+    icon: <TrendingUp className="w-3 h-3" />, 
+    className: 'text-muted-foreground bg-muted/50 border-border/50' 
+  };
+}
+
 // Memoized ArbitrageCard - only re-renders when its specific data changes
 interface ArbitrageCardProps {
   opportunity: ArbitrageOpportunity;
@@ -159,6 +182,7 @@ const ArbitrageCard = memo(function ArbitrageCard({
 }: ArbitrageCardProps) {
   const [copied, setCopied] = useState(false);
   const [copiedTicker, setCopiedTicker] = useState<string | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
   const { match, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate } = opportunity;
   
   const polymarketUrl = match.polymarket.marketSlug 
@@ -173,6 +197,8 @@ const ArbitrageCard = memo(function ArbitrageCard({
   const noMarket = buyNoOn === 'KALSHI' ? match.kalshi : match.polymarket;
   const yesOutcomeLabel = yesMarket.sideA.label || 'Yes';
   const noOutcomeLabel = noMarket.sideB.label || 'No';
+  
+  const profitTier = getProfitTier(profitPercent);
 
   const copyTicker = useCallback((ticker: string, platform: string) => {
     navigator.clipboard.writeText(ticker).then(() => {
@@ -182,36 +208,64 @@ const ArbitrageCard = memo(function ArbitrageCard({
     });
   }, []);
 
+  // Enhanced markdown trade plan
   const copyTradePlan = useCallback(() => {
-    const tradePlan = `📈 ARBITRAGE TRADE PLAN
-━━━━━━━━━━━━━━━━━━━━━━━
+    const tradePlan = `## 🎯 Arbitrage Opportunity
 
-📋 POLYMARKET CONTRACT
-   Name: ${match.polymarket.title}
-   Slug: ${match.polymarket.marketSlug || 'N/A'}
-   Link: ${polymarketUrl}
+**Event:** ${match.polymarket.title}
 
-📋 KALSHI CONTRACT
-   Name: ${match.kalshi.title}
-   Ticker: ${match.kalshi.kalshiMarketTicker || 'N/A'}
-   Link: ${kalshiUrl}
+---
 
-📊 STEP 1: Buy ${yesOutcomeLabel.toUpperCase()} on ${buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}
-   Contract: ${buyYesOn === 'KALSHI' ? match.kalshi.title : match.polymarket.title}
-   Outcome: ${yesOutcomeLabel}
-   Price: ${formatCents(yesPlatformPrice)}
+### Trade Instructions
 
-📊 STEP 2: Buy ${noOutcomeLabel.toUpperCase()} on ${buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}
-   Contract: ${buyNoOn === 'KALSHI' ? match.kalshi.title : match.polymarket.title}
-   Outcome: ${noOutcomeLabel}
-   Price: ${formatCents(noPlatformPrice)}
+| Platform | Action | Outcome | Price |
+|----------|--------|---------|-------|
+| ${buyYesOn === 'POLYMARKET' ? 'Polymarket' : 'Kalshi'} | Buy | "${yesOutcomeLabel}" | ${formatCents(yesPlatformPrice)} |
+| ${buyNoOn === 'POLYMARKET' ? 'Polymarket' : 'Kalshi'} | Buy | "${noOutcomeLabel}" | ${formatCents(noPlatformPrice)} |
 
-💰 PROFIT SUMMARY
-   Total Cost: ${formatCents(combinedCost)}
-   Guaranteed Payout: $1.00
-   Profit: +${formatProfitPercent(profitPercent)} (+$${profitPerDollar.toFixed(3)}/contract)
+---
 
-⏰ Expires: ${expirationDate.toLocaleString()}
+### Profit Breakdown
+
+- **Combined cost:** ${formatCents(combinedCost)}
+- **Guaranteed payout:** $1.00
+- **Net profit:** +${formatProfitPercent(profitPercent)} (+$${profitPerDollar.toFixed(3)} per contract)
+
+---
+
+### Why This Works
+
+Regardless of outcome:
+- If "${yesOutcomeLabel}" wins → Your Yes position pays $1.00, No expires worthless
+- If "${noOutcomeLabel}" wins → Your No position pays $1.00, Yes expires worthless
+
+Either way, you collect $1.00 for ${formatCents(combinedCost)} invested = **${formatProfitPercent(profitPercent)} profit**
+
+---
+
+### Quick Links
+
+- [Open Polymarket](${polymarketUrl})
+- [Open Kalshi](${kalshiUrl})
+
+---
+
+### Contract Details
+
+**Polymarket:**
+- Title: ${match.polymarket.title}
+- Slug: \`${match.polymarket.marketSlug || 'N/A'}\`
+
+**Kalshi:**
+- Title: ${match.kalshi.title}
+- Ticker: \`${match.kalshi.kalshiMarketTicker || 'N/A'}\`
+
+**Expiration:** ${format(expirationDate, "MMMM d, yyyy 'at' h:mm a")}
+**Match Confidence:** ${Math.round(match.matchScore * 100)}%
+
+---
+
+*Generated by Dome Watch*
 `;
     
     navigator.clipboard.writeText(tradePlan).then(() => {
@@ -221,25 +275,31 @@ const ArbitrageCard = memo(function ArbitrageCard({
     });
   }, [match, polymarketUrl, kalshiUrl, yesOutcomeLabel, noOutcomeLabel, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate]);
 
+  // Open both platforms simultaneously
+  const openBothPlatforms = useCallback(() => {
+    window.open(polymarketUrl, '_blank');
+    window.open(kalshiUrl, '_blank');
+  }, [polymarketUrl, kalshiUrl]);
+
   // Determine profit tier for color coding
   const getProfitGradient = (percent: number) => {
-    if (percent >= 5) return 'from-green-500/20 via-emerald-500/10 to-transparent';
-    if (percent >= 2) return 'from-green-500/15 via-emerald-500/5 to-transparent';
-    return 'from-green-500/10 to-transparent';
+    if (percent >= 5) return 'from-chart-4/20 via-emerald-500/10 to-transparent';
+    if (percent >= 2) return 'from-chart-4/15 via-emerald-500/5 to-transparent';
+    return 'from-chart-4/10 to-transparent';
   };
 
   const getProfitBadgeStyle = (percent: number) => {
-    if (percent >= 5) return 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg shadow-green-500/25';
-    if (percent >= 2) return 'bg-gradient-to-r from-green-500/90 to-emerald-600/90 text-white';
-    return 'bg-green-500/80 text-white';
+    if (percent >= 5) return 'bg-gradient-to-r from-chart-4 to-emerald-600 text-white shadow-lg shadow-chart-4/25';
+    if (percent >= 2) return 'bg-gradient-to-r from-chart-4/90 to-emerald-600/90 text-white';
+    return 'bg-chart-4/80 text-white';
   };
   
   return (
     <Card className={`border-chart-4/40 bg-gradient-to-br ${getProfitGradient(profitPercent)} hover:border-chart-4/60 transition-all duration-200 overflow-hidden ${isStale ? 'opacity-70' : ''}`}>
       {/* Profit Header Bar */}
-      <div className={`bg-gradient-to-r ${isStale ? 'from-amber-500/20' : 'from-chart-4/10'} to-transparent px-3 sm:px-4 py-2 border-b ${isStale ? 'border-amber-500/30' : 'border-chart-4/20'}`}>
+      <div className={`bg-gradient-to-r ${isStale ? 'from-amber-500/20' : 'from-chart-4/10'} to-transparent px-3 sm:px-4 py-2.5 border-b ${isStale ? 'border-amber-500/30' : 'border-chart-4/20'}`}>
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {isStale && (
               <Badge variant="outline" className="border-amber-500/50 text-amber-500 text-[10px] px-1.5 py-0">
                 <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />
@@ -250,6 +310,10 @@ const ArbitrageCard = memo(function ArbitrageCard({
               <Sparkles className="w-3 h-3 mr-1" />
               +{formatProfitPercent(profitPercent)}
             </Badge>
+            <Badge variant="outline" className={`text-[10px] px-1.5 py-0.5 ${profitTier.className}`}>
+              {profitTier.icon}
+              <span className="ml-1">{profitTier.label}</span>
+            </Badge>
           </div>
           <FreshnessIndicator 
             polymarket={match.polymarket.lastPriceUpdatedAt} 
@@ -259,184 +323,147 @@ const ArbitrageCard = memo(function ArbitrageCard({
         </div>
       </div>
       
-      <CardContent className="p-3 sm:p-4 space-y-3 sm:space-y-4">
-        {/* Contract Details Section */}
-        <div className="space-y-2">
-          {/* Polymarket Contract */}
-          <div className="p-2.5 rounded-lg bg-muted/50 border border-border/50">
-            <div className="flex items-center gap-1.5 mb-1">
-              <PolymarketIcon className="w-3.5 h-3.5" />
-              <span className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Polymarket</span>
-            </div>
-            <p className="text-xs sm:text-sm font-medium leading-tight line-clamp-2 mb-1.5">
-              {match.polymarket.title}
-            </p>
-            {match.polymarket.marketSlug && (
-              <button 
-                onClick={() => copyTicker(match.polymarket.marketSlug!, 'Polymarket')}
-                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors bg-muted px-1.5 py-0.5 rounded"
-              >
-                {copiedTicker === match.polymarket.marketSlug ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
-                <span className="font-mono truncate max-w-[150px] sm:max-w-[200px]">{match.polymarket.marketSlug}</span>
-              </button>
-            )}
-          </div>
-          
-          {/* Kalshi Contract */}
-          <div className="p-2.5 rounded-lg bg-muted/50 border border-border/50">
-            <div className="flex items-center gap-1.5 mb-1">
-              <KalshiIcon className="w-3.5 h-3.5" />
-              <span className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Kalshi</span>
-            </div>
-            <p className="text-xs sm:text-sm font-medium leading-tight line-clamp-2 mb-1.5">
-              {match.kalshi.title}
-            </p>
-            {match.kalshi.kalshiMarketTicker && (
-              <button 
-                onClick={() => copyTicker(match.kalshi.kalshiMarketTicker!, 'Kalshi')}
-                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors bg-muted px-1.5 py-0.5 rounded"
-              >
-                {copiedTicker === match.kalshi.kalshiMarketTicker ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
-                <span className="font-mono">{match.kalshi.kalshiMarketTicker}</span>
-              </button>
-            )}
+      <CardContent className="p-3 sm:p-4 space-y-4">
+        {/* Event Title */}
+        <div className="space-y-1">
+          <p className="text-sm sm:text-base font-semibold leading-tight line-clamp-2">
+            {match.polymarket.title}
+          </p>
+          <div className="flex items-center gap-2 text-[10px] sm:text-xs text-muted-foreground">
+            <Clock className="w-3 h-3" />
+            <span>Expires {format(expirationDate, "MMM d, yyyy")}</span>
+            <span className="text-border">•</span>
+            <span>{Math.round(match.matchScore * 100)}% match confidence</span>
           </div>
         </div>
+
+        {/* Visual Trade Flow Diagram */}
+        <TradeFlowDiagram opportunity={opportunity} />
         
-        {/* Trade Steps - Mobile Optimized */}
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
-          {/* Step 1 */}
-          <div className="flex items-start gap-3 p-2.5 sm:p-3 rounded-xl bg-card border border-border">
-            <div className="flex flex-col items-center gap-1 shrink-0">
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-chart-4/20 flex items-center justify-center">
-                <span className="text-xs sm:text-sm font-bold text-chart-4">1</span>
+        {/* Quick Action Chips */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button 
+            variant="default" 
+            size="sm" 
+            className="h-8 px-3 text-xs font-medium bg-chart-4 hover:bg-chart-4/90"
+            onClick={openBothPlatforms}
+          >
+            <ExternalLink className="w-3 h-3 mr-1.5" />
+            Open Both
+          </Button>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="h-8 px-3 text-xs"
+            onClick={copyTradePlan}
+          >
+            {copied ? <Check className="w-3 h-3 mr-1.5" /> : <Copy className="w-3 h-3 mr-1.5" />}
+            {copied ? 'Copied!' : 'Copy Plan'}
+          </Button>
+          <Button 
+            variant={isWatchlisted ? "default" : "outline"}
+            size="sm" 
+            className={`h-8 px-3 text-xs ${isWatchlisted ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}`}
+            onClick={onToggleWatchlist}
+          >
+            <Star className={`w-3 h-3 mr-1.5 ${isWatchlisted ? 'fill-current' : ''}`} />
+            {isWatchlisted ? 'Saved' : 'Save'}
+          </Button>
+        </div>
+        
+        {/* Expandable Details Section */}
+        <Collapsible open={showDetails} onOpenChange={setShowDetails}>
+          <CollapsibleTrigger className="w-full">
+            <div className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors border border-border/50">
+              <span className="text-xs font-medium text-muted-foreground">
+                {showDetails ? 'Hide Details' : 'Show Calculator & Scenarios'}
+              </span>
+              {showDetails ? (
+                <ChevronUp className="w-4 h-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+              )}
+            </div>
+          </CollapsibleTrigger>
+          
+          <CollapsibleContent>
+            <div className="mt-3 space-y-4">
+              {/* Mini Calculator */}
+              <MiniCalculator opportunity={opportunity} />
+              
+              {/* Outcome Scenarios */}
+              <OutcomeScenarios opportunity={opportunity} />
+              
+              {/* Contract Details */}
+              <div className="space-y-2">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Contract Details</span>
+                
+                {/* Polymarket Contract */}
+                <div className="p-2.5 rounded-lg bg-muted/50 border border-border/50">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <PolymarketIcon className="w-3.5 h-3.5" />
+                    <span className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Polymarket</span>
+                  </div>
+                  <p className="text-xs sm:text-sm font-medium leading-tight line-clamp-2 mb-1.5">
+                    {match.polymarket.title}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {match.polymarket.marketSlug && (
+                      <button 
+                        onClick={() => copyTicker(match.polymarket.marketSlug!, 'Polymarket')}
+                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors bg-muted px-1.5 py-0.5 rounded"
+                      >
+                        {copiedTicker === match.polymarket.marketSlug ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+                        <span className="font-mono truncate max-w-[150px] sm:max-w-[200px]">{match.polymarket.marketSlug}</span>
+                      </button>
+                    )}
+                    <a 
+                      href={polymarketUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-chart-4 hover:underline flex items-center gap-0.5"
+                    >
+                      Open <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                </div>
+                
+                {/* Kalshi Contract */}
+                <div className="p-2.5 rounded-lg bg-muted/50 border border-border/50">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <KalshiIcon className="w-3.5 h-3.5" />
+                    <span className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Kalshi</span>
+                  </div>
+                  <p className="text-xs sm:text-sm font-medium leading-tight line-clamp-2 mb-1.5">
+                    {match.kalshi.title}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {match.kalshi.kalshiMarketTicker && (
+                      <button 
+                        onClick={() => copyTicker(match.kalshi.kalshiMarketTicker!, 'Kalshi')}
+                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors bg-muted px-1.5 py-0.5 rounded"
+                      >
+                        {copiedTicker === match.kalshi.kalshiMarketTicker ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+                        <span className="font-mono">{match.kalshi.kalshiMarketTicker}</span>
+                      </button>
+                    )}
+                    <a 
+                      href={kalshiUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-chart-4 hover:underline flex items-center gap-0.5"
+                    >
+                      Open <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                </div>
               </div>
-              {buyYesOn === 'KALSHI' ? <KalshiIcon className="w-4 h-4 sm:w-5 sm:h-5" /> : <PolymarketIcon className="w-4 h-4 sm:w-5 sm:h-5" />}
+              
+              {/* Match Details Panel */}
+              <MatchDetailsPanel match={match} />
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Buy {yesOutcomeLabel} on {buyYesOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</p>
-              <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2 mt-0.5">
-                {buyYesOn === 'KALSHI' ? match.kalshi.title : match.polymarket.title}
-              </p>
-            </div>
-            <div className="text-right shrink-0">
-              <PriceFlash 
-                price={yesPlatformPrice} 
-                format={formatCents}
-                className="text-lg sm:text-2xl font-bold text-chart-4"
-                showDirection
-              />
-            </div>
-          </div>
-          
-          {/* Step 2 */}
-          <div className="flex items-start gap-3 p-2.5 sm:p-3 rounded-xl bg-card border border-border">
-            <div className="flex flex-col items-center gap-1 shrink-0">
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-chart-4/20 flex items-center justify-center">
-                <span className="text-xs sm:text-sm font-bold text-chart-4">2</span>
-              </div>
-              {buyNoOn === 'KALSHI' ? <KalshiIcon className="w-4 h-4 sm:w-5 sm:h-5" /> : <PolymarketIcon className="w-4 h-4 sm:w-5 sm:h-5" />}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] sm:text-xs text-muted-foreground font-medium uppercase tracking-wide">Buy {noOutcomeLabel} on {buyNoOn === 'KALSHI' ? 'Kalshi' : 'Polymarket'}</p>
-              <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2 mt-0.5">
-                {buyNoOn === 'KALSHI' ? match.kalshi.title : match.polymarket.title}
-              </p>
-            </div>
-            <div className="text-right shrink-0">
-              <PriceFlash 
-                price={noPlatformPrice} 
-                format={formatCents}
-                className="text-lg sm:text-2xl font-bold text-chart-4"
-                showDirection
-              />
-            </div>
-          </div>
-        </div>
-        
-        {/* Profit Summary Visual */}
-        <div className="p-3 rounded-xl bg-gradient-to-r from-muted/80 to-muted/40 border border-border/50">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2 text-xs sm:text-sm">
-              <DollarSign className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-muted-foreground">Total Cost:</span>
-              <span className="font-bold">{formatCents(combinedCost)}</span>
-            </div>
-            <ArrowRight className="w-4 h-4 text-muted-foreground" />
-            <div className="flex items-center gap-2 text-xs sm:text-sm">
-              <CheckCircle2 className="w-3.5 h-3.5 text-chart-4" />
-              <span className="text-muted-foreground">Payout:</span>
-              <span className="font-bold text-chart-4">$1.00</span>
-            </div>
-          </div>
-          {/* Visual profit bar */}
-          <div className="relative h-2 bg-muted rounded-full overflow-hidden">
-            <div 
-              className="absolute inset-y-0 left-0 bg-gradient-to-r from-chart-4 to-emerald-400 rounded-full"
-              style={{ width: `${Math.min(100, (1 - combinedCost) * 100 + 50)}%` }}
-            />
-          </div>
-          <div className="mt-2 text-center">
-            <span className="text-chart-4 font-bold text-sm sm:text-base">
-              +${profitPerDollar.toFixed(3)} profit per contract
-            </span>
-          </div>
-        </div>
-        
-        {/* Footer Actions - Mobile Optimized */}
-        <div className="flex flex-col gap-2 pt-2 border-t border-border/50">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-[10px] sm:text-xs text-muted-foreground">
-              <Clock className="w-3 h-3" />
-              <span>{format(expirationDate, "MMM d, h:mm a")}</span>
-            </div>
-            <span className="text-[10px] text-muted-foreground">{Math.round(match.matchScore * 100)}% match</span>
-          </div>
-          
-          {/* Action Buttons - Stack on mobile */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Button variant="ghost" size="sm" asChild className="h-8 px-2.5 text-xs flex-1 sm:flex-none min-w-0">
-              <a href={kalshiUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-1">
-                <KalshiIcon className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Kalshi</span>
-                <ExternalLink className="w-3 h-3 shrink-0" />
-              </a>
-            </Button>
-            <Button variant="ghost" size="sm" asChild className="h-8 px-2.5 text-xs flex-1 sm:flex-none min-w-0">
-              <a href={polymarketUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-1">
-                <PolymarketIcon className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Poly</span>
-                <ExternalLink className="w-3 h-3 shrink-0" />
-              </a>
-            </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="h-8 px-2.5 text-xs"
-              onClick={copyTradePlan}
-            >
-              {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-            </Button>
-            <Button 
-              variant={isWatchlisted ? "default" : "outline"}
-              size="sm" 
-              className={`h-8 px-2.5 text-xs ${isWatchlisted ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}`}
-              onClick={onToggleWatchlist}
-            >
-              <Star className={`w-3 h-3 ${isWatchlisted ? 'fill-current' : ''}`} />
-            </Button>
-            <Link to={`/calculator?kalshi=${Math.round(yesPlatformPrice * 100)}&poly=${Math.round(noPlatformPrice * 100)}`} className="flex-1 sm:flex-none">
-              <Button variant="secondary" size="sm" className="h-8 px-3 text-xs font-medium w-full">
-                <Calculator className="w-3 h-3 mr-1" />
-                <span className="hidden xs:inline">Calculate</span>
-                <span className="xs:hidden">Calc</span>
-              </Button>
-            </Link>
-          </div>
-          
-          {/* Match Details Panel */}
-          <MatchDetailsPanel match={match} />
-        </div>
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   );
