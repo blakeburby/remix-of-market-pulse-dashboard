@@ -144,7 +144,7 @@ function filterByProfitThreshold(
 }
 
 export function useArbitrage(): UseArbitrageResult {
-  const { markets, isDiscovering, isPriceUpdating, setMatchedPolymarketIds, setMatchedKalshiTickers } = useMarkets();
+  const { markets, isDiscovering, isPriceUpdating, setMatchedPolymarketIds, setMatchedKalshiTickers, triggerImmediatePriceFetch } = useMarkets();
   const { settings, updateSettings } = useArbitrageSettings();
   
   const result = useMemo(() => {
@@ -229,11 +229,16 @@ export function useArbitrage(): UseArbitrageResult {
     };
   }, [markets, settings]);
   
-  // Update matched IDs for priority price fetching
+  // Update matched IDs for priority price fetching and trigger immediate fetch
   useEffect(() => {
     setMatchedPolymarketIds(result.matchedPolyIds);
     setMatchedKalshiTickers(result.matchedKalshiTickers);
-  }, [result.matchedPolyIds, result.matchedKalshiTickers, setMatchedPolymarketIds, setMatchedKalshiTickers]);
+    
+    // Trigger immediate price fetch for newly matched markets
+    if (result.matchedPolyIds.size > 0 || result.matchedKalshiTickers.size > 0) {
+      triggerImmediatePriceFetch();
+    }
+  }, [result.matchedPolyIds, result.matchedKalshiTickers, setMatchedPolymarketIds, setMatchedKalshiTickers, triggerImmediatePriceFetch]);
   
   return {
     opportunities: result.opportunities,
