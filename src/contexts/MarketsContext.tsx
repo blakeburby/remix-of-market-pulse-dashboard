@@ -13,16 +13,16 @@ import {
   PolymarketPriceResponse,
   GroupedEvent,
   DiscoveryProgress,
-  DiscoveryStatus,
 } from '@/types/dome';
 import { useAuth } from '@/contexts/AuthContext';
 import { polymarketRateLimiter, kalshiRateLimiter, getCombinedStats, allocateQpsBudget } from '@/lib/rate-limiter';
 import { toast } from '@/hooks/use-toast';
 import { useDomeWebSocket } from '@/hooks/useDomeWebSocket';
-import { useKalshiWebSocket, KalshiWSStatus } from '@/hooks/useKalshiWebSocket';
-import { KalshiPrices } from '@/lib/kalshi-orderbook';
 import { supabase } from '@/integrations/supabase/client';
 import { useMarketsLoading } from './MarketsLoadingContext';
+
+// Kalshi WebSocket status type (simplified - WebSocket is disabled)
+type KalshiWSStatus = 'disconnected' | 'connecting' | 'authenticating' | 'connected' | 'error';
 
 interface MarketsContextType {
   markets: UnifiedMarket[];
@@ -101,7 +101,6 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const discoveryIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rpmIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const priceUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const priceDispatchIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const batchFlushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isDiscoveringRef = useRef(false);
   const isPriceUpdatingRef = useRef(false);
@@ -201,50 +200,10 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     enabled: wsEnabled && isAuthenticated && polymarketSlugs.length > 0,
   });
 
-  // Get matched Kalshi tickers for WebSocket subscriptions
-  const kalshiTickers = useMemo(() => 
-    Array.from(matchedKalshiTickersRef.current),
-    [matchedKalshiTickerCount] // Re-compute when count changes
-  );
-
-  // Kalshi WebSocket price update handler
-  const handleKalshiWsPriceUpdate = useCallback((marketTicker: string, prices: KalshiPrices) => {
-    const marketId = `kalshi_${marketTicker}`;
-    const now = prices.lastUpdated;
-
-    setMarkets((prev) =>
-      prev.map((market) => {
-        if (market.id !== marketId) return market;
-
-        return {
-          ...market,
-          sideA: {
-            ...market.sideA,
-            price: prices.yes,
-            probability: prices.yes,
-            odds: prices.yes > 0 ? 1 / prices.yes : null,
-          },
-          sideB: {
-            ...market.sideB,
-            price: prices.no,
-            probability: prices.no,
-            odds: prices.no > 0 ? 1 / prices.no : null,
-          },
-          lastUpdated: now,
-          lastPriceUpdatedAt: now,
-        };
-      })
-    );
-
-    setLastPriceUpdate(new Date());
-    setLastKalshiRefresh(new Date());
-  }, []);
-
   // Kalshi WebSocket DISABLED - Edge function cannot reach Kalshi's servers (DNS resolution failure)
   // Using REST API polling instead via fetchMatchedKalshiPrices
   const kalshiWsStatus: KalshiWSStatus = 'disconnected';
   const kalshiWsSubscriptionCount = 0;
-  const kalshiWsConnected = false;
 
   // Deferred markets for expensive computations - prevents UI blocking
   const deferredMarkets = useDeferredValue(markets);
@@ -1080,80 +1039,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const filteredMarketsRef = useRef(filteredMarkets);
   filteredMarketsRef.current = filteredMarkets;
 
-  // Steady 100 QPS dispatcher (no burst): one request every 10ms (dev tier)
-  const priceCursorRef = useRef(0);
-  const lastQpsLogAtRef = useRef(0);
-
-  // Fire a single price fetch - uses rate limiter internally
-  const firePriceFetch = useCallback((market: UnifiedMarket, apiKey: string) => {
-    const tokenA = market.sideA.tokenId;
-    const tokenB = market.sideB.tokenId;
-    if (!tokenA || !tokenB) return;
-
-    // Fire and forget - rate limiting happens inside fetchTokenPriceDirect
-    (async () => {
-      const resA = await fetchTokenPriceDirect(tokenA, apiKey);
-      if (!isPriceUpdatingRef.current || resA.rateLimited) return;
-
-      const resB = await fetchTokenPriceDirect(tokenB, apiKey);
-      if (!isPriceUpdatingRef.current || resB.rateLimited) return;
-
-      if (typeof resA.price === 'number' && typeof resB.price === 'number') {
-        pendingPriceUpdates.current.set(market.id, {
-          priceA: resA.price,
-          priceB: resB.price,
-          timestamp: new Date(),
-        });
-      }
-    })();
-  }, []);
-
   // Track cursor for round-robin price fetching of matched markets
   const matchedCursorRef = useRef(0);
-
-  const dispatchOnePriceFetch = useCallback(() => {
-    if (!isPriceUpdatingRef.current) return;
-
-    const apiKey = getApiKey();
-    if (!apiKey) return;
-
-    // Backoff if API told us to
-    const now = Date.now();
-    if (now < priceRateLimitedUntil.current) return;
-
-    const candidateMarkets = filteredMarketsRef.current.length > 0
-      ? filteredMarketsRef.current
-      : marketsRef.current;
-
-    const tokenMarkets = candidateMarkets.filter(m =>
-      m.platform === 'POLYMARKET' &&
-      m.sideA.tokenId &&
-      !failedTokenIds.current.has(m.sideA.tokenId)
-    );
-
-    if (tokenMarkets.length === 0) return;
-
-    // OPTIMIZATION: Prioritize matched markets, but still fetch others if no matches yet
-    const matchedMarkets = tokenMarkets.filter(m => matchedIdsRef.current.has(m.id));
-
-    // Use matched markets if available, otherwise fall back to all token markets
-    const targetMarkets = matchedMarkets.length > 0 ? matchedMarkets : tokenMarkets;
-
-    // Round-robin through target markets
-    const idx = matchedCursorRef.current % targetMarkets.length;
-    matchedCursorRef.current = idx + 1;
-    const market = targetMarkets[idx];
-
-    // Fire non-blocking fetch (rate limiting happens inside fetchTokenPriceDirect)
-    firePriceFetch(market, apiKey);
-
-    // Debug: log achieved RPM every ~10s
-    const logNow = Date.now();
-    if (logNow - lastQpsLogAtRef.current > 10000) {
-      lastQpsLogAtRef.current = logNow;
-      console.log(`[Price] RPM=${getCombinedStats().totalRpm} matched=${matchedMarkets.length} available=${polymarketRateLimiter.getAvailableTokens()}`);
-    }
-  }, [getApiKey, firePriceFetch]);
+  const lastQpsLogAtRef = useRef(0);
 
   // Sequential price loop - fetches one at a time with proper rate limiting
   const priceLoopRunningRef = useRef(false);
@@ -1779,10 +1667,6 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
 
   // Allow startPriceUpdates (defined earlier) to kick off Kalshi updates.
   startKalshiPriceLoopRef.current = startKalshiPriceLoop;
-
-  const stopKalshiPriceLoop = useCallback(() => {
-    isKalshiPricingRef.current = false;
-  }, []);
 
   // Force refresh Kalshi prices for matched markets (manual trigger)
   const refreshKalshiPrices = useCallback(async () => {
