@@ -201,7 +201,7 @@ serve(async (req) => {
       console.log('[Kalshi WS Proxy] JWT created successfully');
 
       // Connect to Kalshi's production WebSocket with auth
-      kalshiSocket = new WebSocket('wss://api.elections.kalshi.com/trade-api/ws/v2');
+      kalshiSocket = new WebSocket('wss://api.kalshi.com/trade-api/ws/v2');
 
       kalshiSocket.onopen = () => {
         console.log('[Kalshi WS Proxy] Connected to Kalshi WebSocket');
