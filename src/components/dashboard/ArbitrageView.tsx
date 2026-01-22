@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { useArbitrage } from '@/hooks/useArbitrage';
 import { useMarkets } from '@/contexts/MarketsContext';
@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -32,22 +31,30 @@ import { format } from 'date-fns';
 
 type SortOption = 'profit' | 'expiration' | 'freshness';
 
-// Platform icon components
-function PolymarketIcon({ className = "w-4 h-4" }: { className?: string }) {
-  return (
-    <div className={`${className} rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-[8px]`}>
+// Platform icon components with forwardRef for tooltip compatibility
+const PolymarketIcon = React.forwardRef<HTMLDivElement, { className?: string }>(
+  ({ className = "w-4 h-4" }, ref) => (
+    <div 
+      ref={ref}
+      className={`${className} rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold text-[8px]`}
+    >
       P
     </div>
-  );
-}
+  )
+);
+PolymarketIcon.displayName = 'PolymarketIcon';
 
-function KalshiIcon({ className = "w-4 h-4" }: { className?: string }) {
-  return (
-    <div className={`${className} rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white font-bold text-[8px]`}>
+const KalshiIcon = React.forwardRef<HTMLDivElement, { className?: string }>(
+  ({ className = "w-4 h-4" }, ref) => (
+    <div 
+      ref={ref}
+      className={`${className} rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white font-bold text-[8px]`}
+    >
       K
     </div>
-  );
-}
+  )
+);
+KalshiIcon.displayName = 'KalshiIcon';
 
 // Helper to format age in human-readable format
 function formatAge(date: Date | undefined | null): string {
@@ -70,8 +77,8 @@ function getFreshnessColor(date: Date | undefined | null, maxAgeSeconds: number)
   return 'text-destructive';
 }
 
-// Freshness indicator with dots
-function FreshnessIndicator({ 
+// Freshness indicator with dots - memoized to prevent re-renders
+const FreshnessIndicator = memo(function FreshnessIndicator({ 
   polymarket, 
   kalshi, 
   maxAgeSeconds 
@@ -96,22 +103,60 @@ function FreshnessIndicator({
       </div>
     </div>
   );
+});
+
+// Isolated countdown component - only this re-renders every second
+const RefreshCountdown = memo(function RefreshCountdown({ 
+  enabled, 
+  intervalSeconds,
+  matchCount
+}: { 
+  enabled: boolean; 
+  intervalSeconds: number;
+  matchCount: number;
+}) {
+  const [countdown, setCountdown] = useState(intervalSeconds);
+  
+  useEffect(() => {
+    if (!enabled || matchCount === 0) {
+      setCountdown(0);
+      return;
+    }
+    
+    setCountdown(intervalSeconds);
+    const timer = setInterval(() => {
+      setCountdown(prev => prev <= 1 ? intervalSeconds : prev - 1);
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, [enabled, intervalSeconds, matchCount]);
+  
+  if (!enabled || countdown <= 0) return null;
+  
+  return (
+    <Badge variant="secondary" className="text-xs px-2 py-1">
+      <RefreshCw className="w-3 h-3 mr-1" />
+      {countdown}s
+    </Badge>
+  );
+});
+
+// Memoized ArbitrageCard - only re-renders when its specific data changes
+interface ArbitrageCardProps {
+  opportunity: ArbitrageOpportunity;
+  maxAgeSeconds: number;
+  isStale?: boolean;
+  isWatchlisted?: boolean;
+  onToggleWatchlist?: () => void;
 }
 
-
-function ArbitrageCard({ 
+const ArbitrageCard = memo(function ArbitrageCard({ 
   opportunity, 
   maxAgeSeconds, 
   isStale = false,
   isWatchlisted = false,
   onToggleWatchlist
-}: { 
-  opportunity: ArbitrageOpportunity; 
-  maxAgeSeconds: number; 
-  isStale?: boolean;
-  isWatchlisted?: boolean;
-  onToggleWatchlist?: () => void;
-}) {
+}: ArbitrageCardProps) {
   const [copied, setCopied] = useState(false);
   const [copiedTicker, setCopiedTicker] = useState<string | null>(null);
   const { match, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate } = opportunity;
@@ -129,15 +174,15 @@ function ArbitrageCard({
   const yesOutcomeLabel = yesMarket.sideA.label || 'Yes';
   const noOutcomeLabel = noMarket.sideB.label || 'No';
 
-  const copyTicker = (ticker: string, platform: string) => {
+  const copyTicker = useCallback((ticker: string, platform: string) => {
     navigator.clipboard.writeText(ticker).then(() => {
       setCopiedTicker(ticker);
       toast.success(`${platform} ticker copied!`);
       setTimeout(() => setCopiedTicker(null), 2000);
     });
-  };
+  }, []);
 
-  const copyTradePlan = () => {
+  const copyTradePlan = useCallback(() => {
     const tradePlan = `📈 ARBITRAGE TRADE PLAN
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -174,7 +219,7 @@ function ArbitrageCard({
       toast.success('Trade plan copied to clipboard!');
       setTimeout(() => setCopied(false), 2000);
     });
-  };
+  }, [match, polymarketUrl, kalshiUrl, yesOutcomeLabel, noOutcomeLabel, buyYesOn, buyNoOn, yesPlatformPrice, noPlatformPrice, combinedCost, profitPercent, profitPerDollar, expirationDate]);
 
   // Determine profit tier for color coding
   const getProfitGradient = (percent: number) => {
@@ -395,9 +440,15 @@ function ArbitrageCard({
       </CardContent>
     </Card>
   );
+});
+
+// Memoized MatchCard - only re-renders when its specific data changes
+interface MatchCardProps {
+  match: CrossPlatformMatch;
+  maxAgeSeconds: number;
 }
 
-function MatchCard({ match, maxAgeSeconds }: { match: CrossPlatformMatch; maxAgeSeconds: number }) {
+const MatchCard = memo(function MatchCard({ match, maxAgeSeconds }: MatchCardProps) {
   const polyYes = match.polymarket.sideA.probability ?? 0;
   const polyNo = match.polymarket.sideB.probability ?? 0;
   const kalshiYes = match.kalshi.sideA.probability ?? 0;
@@ -482,7 +533,7 @@ function MatchCard({ match, maxAgeSeconds }: { match: CrossPlatformMatch; maxAge
       </CardContent>
     </Card>
   );
-}
+});
 
 export function ArbitrageView() {
   const { 
@@ -507,37 +558,19 @@ export function ArbitrageView() {
   const [sortBy, setSortBy] = useState<SortOption>('profit');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
-  const [nextRefreshIn, setNextRefreshIn] = useState<number>(0);
   const [matchesPage, setMatchesPage] = useState(1);
   const MATCHES_PER_PAGE = 30;
   const autoRefreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Auto-refresh logic
+  // Auto-refresh logic - simplified, countdown is now isolated
   useEffect(() => {
-    // Clear existing timers
     if (autoRefreshTimerRef.current) {
       clearInterval(autoRefreshTimerRef.current);
       autoRefreshTimerRef.current = null;
     }
-    if (countdownTimerRef.current) {
-      clearInterval(countdownTimerRef.current);
-      countdownTimerRef.current = null;
-    }
 
     if (settings.autoRefreshEnabled && matches.length > 0) {
       const intervalMs = settings.autoRefreshIntervalSeconds * 1000;
-      setNextRefreshIn(settings.autoRefreshIntervalSeconds);
-
-      // Countdown timer (updates every second)
-      countdownTimerRef.current = setInterval(() => {
-        setNextRefreshIn(prev => {
-          if (prev <= 1) {
-            return settings.autoRefreshIntervalSeconds;
-          }
-          return prev - 1;
-        });
-      }, 1000);
 
       // Auto-refresh timer
       autoRefreshTimerRef.current = setInterval(() => {
@@ -550,22 +583,16 @@ export function ArbitrageView() {
       if (!isRefreshingAllPrices) {
         refreshAllMatchedPrices();
       }
-    } else {
-      setNextRefreshIn(0);
     }
 
     return () => {
       if (autoRefreshTimerRef.current) {
         clearInterval(autoRefreshTimerRef.current);
       }
-      if (countdownTimerRef.current) {
-        clearInterval(countdownTimerRef.current);
-      }
     };
-  }, [settings.autoRefreshEnabled, settings.autoRefreshIntervalSeconds, matches.length, refreshAllMatchedPrices]);
+  }, [settings.autoRefreshEnabled, settings.autoRefreshIntervalSeconds, matches.length, refreshAllMatchedPrices, isRefreshingAllPrices]);
 
-  // Filter and sort opportunities
-  // NOTE: Always show ALL opportunities (fresh + stale) - they never disappear
+  // Filter and sort opportunities - memoized
   const displayOpportunities = useMemo(() => {
     let all = [...freshOpportunities, ...staleOpportunities];
     
@@ -606,6 +633,16 @@ export function ArbitrageView() {
   // Track which opportunities are stale for badge display
   const staleIds = useMemo(() => new Set(staleOpportunities.map(o => o.id)), [staleOpportunities]);
   
+  // Memoize callbacks to prevent re-renders
+  const handleToggleWatchlist = useCallback((opp: ArbitrageOpportunity) => {
+    toggleWatchlist(
+      opp.match.polymarket.conditionId,
+      opp.match.kalshi.kalshiMarketTicker,
+      opp.match.matchScore,
+      opp.match.polymarket.title
+    );
+  }, [toggleWatchlist]);
+  
   if (isLoading && matches.length === 0) {
     return (
       <div className="space-y-4">
@@ -639,7 +676,7 @@ export function ArbitrageView() {
                 <span className="font-mono text-sm font-semibold">{summary.kalshiCount.toLocaleString()}</span>
                 {kalshiWsStatus === 'connected' && (
                   <span className="flex items-center gap-1 text-[10px] text-chart-4">
-                    <span className="w-1.5 h-1.5 rounded-full bg-chart-4 animate-pulse" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-chart-4" />
                     WS
                   </span>
                 )}
@@ -654,7 +691,7 @@ export function ArbitrageView() {
               </div>
               {matchesAwaitingPrices > 0 && (
                 <div className="flex items-center gap-1.5 text-amber-500 text-xs">
-                  <Timer className="w-3.5 h-3.5 animate-pulse" />
+                  <Timer className="w-3.5 h-3.5" />
                   <span>{matchesWithValidPrices}/{matches.length} live</span>
                 </div>
               )}
@@ -814,12 +851,11 @@ export function ArbitrageView() {
         </div>
         
         <div className="flex items-center gap-2">
-          {settings.autoRefreshEnabled && nextRefreshIn > 0 && (
-            <Badge variant="secondary" className="text-xs px-2 py-1">
-              <RefreshCw className="w-3 h-3 mr-1 animate-spin" style={{ animationDuration: '3s' }} />
-              {nextRefreshIn}s
-            </Badge>
-          )}
+          <RefreshCountdown 
+            enabled={settings.autoRefreshEnabled}
+            intervalSeconds={settings.autoRefreshIntervalSeconds}
+            matchCount={matches.length}
+          />
           <Button 
             variant="outline" 
             size="sm" 
@@ -827,7 +863,7 @@ export function ArbitrageView() {
             disabled={isRefreshingAllPrices}
             className="h-9"
           >
-            <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingAllPrices ? 'animate-pulse text-chart-4' : ''}`} />
+            <Zap className={`w-3.5 h-3.5 mr-1.5 ${isRefreshingAllPrices ? 'text-chart-4' : ''}`} />
             {isRefreshingAllPrices ? 'Refreshing...' : 'Refresh All Prices'}
           </Button>
         </div>
@@ -843,12 +879,7 @@ export function ArbitrageView() {
               maxAgeSeconds={settings.maxAgeSeconds} 
               isStale={staleIds.has(opp.id)}
               isWatchlisted={isInWatchlist(opp.match.polymarket.conditionId, opp.match.kalshi.kalshiMarketTicker)}
-              onToggleWatchlist={() => toggleWatchlist(
-                opp.match.polymarket.conditionId,
-                opp.match.kalshi.kalshiMarketTicker,
-                opp.match.matchScore,
-                opp.match.polymarket.title
-              )}
+              onToggleWatchlist={() => handleToggleWatchlist(opp)}
             />
           ))}
         </div>
@@ -856,7 +887,7 @@ export function ArbitrageView() {
         <Card className="border-dashed border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-transparent">
           <CardContent className="py-8 sm:py-12 text-center px-4">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-500/10 flex items-center justify-center">
-              <RefreshCw className="w-8 h-8 text-amber-500 animate-spin" style={{ animationDuration: '3s' }} />
+              <RefreshCw className="w-8 h-8 text-amber-500" />
             </div>
             <h3 className="text-base sm:text-lg font-semibold mb-2">Waiting for Fresh Prices</h3>
             <p className="text-muted-foreground text-xs sm:text-sm max-w-md mx-auto mb-4">
