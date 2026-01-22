@@ -1651,7 +1651,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       if (matchedTickers.length === 0) return new Map();
 
       const toUpdate = new Map<string, { yes: number; no: number }>();
-      const CONCURRENCY = tier === 'free' ? 5 : 15;
+      // Higher concurrency - rate limiter controls actual throughput
+      const CONCURRENCY = tier === 'free' ? 10 : 25;
 
       let cursor = 0;
       const worker = async () => {
@@ -1664,6 +1665,16 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
             // Use dedicated market-price endpoint for faster, more accurate real-time prices
             const url = `https://api.domeapi.io/v1/kalshi/market-price/${safeTicker}`;
             const response = await rateLimitedFetch(url, apiKey, 'KALSHI');
+            
+            // Handle 429 rate limiting with backoff
+            if (response.status === 429) {
+              const data = await response.json().catch(() => ({}));
+              const retryAfter = (data as any).retry_after || 5;
+              kalshiRateLimiter.markRateLimited(retryAfter);
+              await sleep(retryAfter * 1000);
+              cursor--; // Retry this ticker
+              continue;
+            }
             
             if (!response.ok) {
               // 404 = market not found or no price data
@@ -1829,6 +1840,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   }, [getApiKey, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates]);
 
   // Immediate price fetch for newly matched markets (called by useArbitrage)
+  // OPTIMIZED: Priority burst for first 10 Kalshi tickers (bypass rate limiter for instant first paint)
   const triggerImmediatePriceFetch = useCallback(async () => {
     const apiKey = getApiKey();
     if (!apiKey || isWarmingUpRef.current) return;
@@ -1859,12 +1871,60 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     
     setFetchingPriceIds(prev => new Set([...prev, ...allFetchingIds]));
     
+    // SAFETY: Clear stuck spinners after 15 seconds
+    const timeoutId = setTimeout(() => {
+      setFetchingPriceIds(prev => {
+        const next = new Set(prev);
+        allFetchingIds.forEach(id => next.delete(id));
+        return next;
+      });
+    }, 15000);
+    
     try {
-      // Fetch both in parallel with proper error handling for each
+      // PRIORITY BURST: Fetch first 10 Kalshi tickers immediately (parallel, no rate limit)
+      // This provides fast first paint for visible cards
+      const PRIORITY_COUNT = 10;
+      const priorityTickers = matchedKalshiTickers.slice(0, PRIORITY_COUNT);
+      const remainingKalshiTickers = matchedKalshiTickers.slice(PRIORITY_COUNT);
+      
+      // Fire priority fetches in parallel without waiting for rate limiter
+      const priorityPromises = priorityTickers.map(async (ticker) => {
+        try {
+          const safeTicker = encodeURIComponent(ticker);
+          const url = `https://api.domeapi.io/v1/kalshi/market-price/${safeTicker}`;
+          const response = await fetch(url, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          });
+          
+          if (response.ok) {
+            const data: KalshiMarketPriceResponse = await response.json();
+            if (data.yes?.price !== undefined && data.no?.price !== undefined) {
+              // Apply update immediately for fast first paint
+              const singleUpdate = new Map([[`kalshi_${ticker}`, { yes: data.yes.price, no: data.no.price }]]);
+              applyKalshiPriceUpdates(singleUpdate);
+              console.log(`[Priority Price] ${ticker}: yes=${data.yes.price.toFixed(2)}, no=${data.no.price.toFixed(2)}`);
+              
+              // Remove this ticker from fetching state immediately
+              setFetchingPriceIds(prev => {
+                const next = new Set(prev);
+                next.delete(`kalshi_${ticker}`);
+                return next;
+              });
+            }
+          }
+        } catch {
+          // Ignore individual errors, will be retried in background
+        }
+      });
+      
+      // Fetch both Polymarket and priority Kalshi in parallel
       await Promise.all([
+        // Priority Kalshi burst (first 10)
+        Promise.allSettled(priorityPromises),
+        
+        // Polymarket prices
         warmMatchedPolymarketPrices(matchedPoly, apiKey)
           .then(() => {
-            // Remove Poly IDs from fetching set on success
             setFetchingPriceIds(prev => {
               const next = new Set(prev);
               polyIdsToFetch.forEach(id => next.delete(id));
@@ -1873,35 +1933,48 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           })
           .catch((err) => {
             console.error('[Immediate Price Fetch] Polymarket error:', err);
-            // Clear fetching state on error too
             setFetchingPriceIds(prev => {
               const next = new Set(prev);
               polyIdsToFetch.forEach(id => next.delete(id));
               return next;
             });
           }),
+      ]);
+      
+      // Fetch remaining Kalshi tickers through rate limiter (background)
+      if (remainingKalshiTickers.length > 0) {
+        // Update the ref to only contain remaining tickers temporarily
+        const originalTickers = matchedKalshiTickersRef.current;
+        matchedKalshiTickersRef.current = new Set(remainingKalshiTickers);
+        
         fetchMatchedKalshiPrices(apiKey)
           .then(updates => {
             applyKalshiPriceUpdates(updates);
-            // Remove Kalshi IDs from fetching set on success
             setFetchingPriceIds(prev => {
               const next = new Set(prev);
-              kalshiIdsToFetch.forEach(id => next.delete(id));
+              remainingKalshiTickers.forEach(t => next.delete(`kalshi_${t}`));
               return next;
             });
           })
           .catch((err) => {
-            console.error('[Immediate Price Fetch] Kalshi error:', err);
-            // Clear fetching state on error too
+            console.error('[Immediate Price Fetch] Kalshi background error:', err);
             setFetchingPriceIds(prev => {
               const next = new Set(prev);
-              kalshiIdsToFetch.forEach(id => next.delete(id));
+              remainingKalshiTickers.forEach(t => next.delete(`kalshi_${t}`));
               return next;
             });
-          }),
-      ]);
+          })
+          .finally(() => {
+            // Restore original tickers
+            matchedKalshiTickersRef.current = originalTickers;
+          });
+      }
+      
+      // Clear timeout since we completed successfully
+      clearTimeout(timeoutId);
     } catch (error) {
       console.error('[Immediate Price Fetch] Unexpected error:', error);
+      clearTimeout(timeoutId);
       // Clear all fetching state as a fallback
       setFetchingPriceIds(prev => {
         const next = new Set(prev);

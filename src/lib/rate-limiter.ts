@@ -222,10 +222,11 @@ export class RateLimiter {
 export const polymarketRateLimiter = new RateLimiter('dev');
 export const kalshiRateLimiter = new RateLimiter('dev');
 
-// Set 2.5 QPS for each platform (5 QPS total = 50 per 10 seconds)
+// Set QPS budget: 2 Polymarket, 3 Kalshi (5 QPS total = 50 per 10 seconds)
+// Kalshi gets more budget because price fetches are individual ticker requests
 // This matches Dome API's actual rate limit for dev_tier
-polymarketRateLimiter.setCustomQps(2.5);
-kalshiRateLimiter.setCustomQps(2.5);
+polymarketRateLimiter.setCustomQps(2);
+kalshiRateLimiter.setCustomQps(3);
 
 // Legacy global rate limiter - points to polymarket for backward compatibility
 export const globalRateLimiter = polymarketRateLimiter;
@@ -234,9 +235,9 @@ export const globalRateLimiter = polymarketRateLimiter;
 export function setAllTiers(tier: DomeTier) {
   polymarketRateLimiter.setTier(tier);
   kalshiRateLimiter.setTier(tier);
-  // Re-apply custom QPS after tier change (50 per 10s = 5 QPS total, split evenly)
-  polymarketRateLimiter.setCustomQps(2.5);
-  kalshiRateLimiter.setCustomQps(2.5);
+  // Re-apply custom QPS after tier change (50 per 10s = 5 QPS total, Kalshi gets more)
+  polymarketRateLimiter.setCustomQps(2);
+  kalshiRateLimiter.setCustomQps(3);
 }
 
 // Get combined stats from both rate limiters
