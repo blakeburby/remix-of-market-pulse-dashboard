@@ -82,6 +82,17 @@ const MarketsContext = createContext<MarketsContextType | null>(null);
 // Helper for exponential backoff
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Filter markets to only include those expiring within the next 30 days
+const END_TIME_WINDOW_DAYS = 30;
+
+function filterByExpiryWindow(markets: UnifiedMarket[]): UnifiedMarket[] {
+  const maxEndTime = Date.now() + END_TIME_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  return markets.filter(market => {
+    if (!market.endTime) return false;
+    return market.endTime.getTime() <= maxEndTime;
+  });
+}
+
 export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const { getApiKey, isAuthenticated, tier } = useAuth();
   const [markets, setMarkets] = useState<UnifiedMarket[]>([]);
@@ -758,7 +769,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           try {
             const response = await rateLimitedFetch(url, apiKey, platform, signal);
             const data: PolymarketMarketsResponse = await response.json();
-            const pageMarkets = data.markets.map(convertPolymarketMarket);
+            const pageMarkets = filterByExpiryWindow(data.markets.map(convertPolymarketMarket));
             const hasMore = data.pagination.has_more;
 
             if (pageMarkets.length === 0) {
@@ -859,7 +870,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
             }
 
             const data = await response.json();
-            const pageMarkets = (data.markets || []).map(convertKalshiMarket);
+            const pageMarkets = filterByExpiryWindow((data.markets || []).map(convertKalshiMarket));
             
             // Extract next cursor
             paginationKey = data.pagination?.next_key || data.pagination?.pagination_key;
