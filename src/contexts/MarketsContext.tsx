@@ -751,7 +751,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           if (signal?.aborted || hitEmptyPage) return;
           
           const offset = offsets[index];
-          const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}`;
+          // Only fetch markets expiring within the next 30 days
+          const endTimeFilter = Math.floor((Date.now() + 30 * 24 * 60 * 60 * 1000) / 1000);
+          const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}&end_time_lte=${endTimeFilter}`;
           
           try {
             const response = await rateLimitedFetch(url, apiKey, platform, signal);
@@ -826,7 +828,9 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
           await rateLimiter.waitAndAcquire();
           
           // Build URL with cursor
-          let url = `${baseUrl}?status=open&limit=${limit}`;
+          // Only fetch markets expiring within the next 30 days
+          const endTimeFilter = Math.floor((Date.now() + 30 * 24 * 60 * 60 * 1000) / 1000);
+          let url = `${baseUrl}?status=open&limit=${limit}&end_time_lte=${endTimeFilter}`;
           if (paginationKey) {
             url += `&pagination_key=${encodeURIComponent(paginationKey)}`;
           }
