@@ -77,6 +77,18 @@ export interface KalshiMarketsResponse {
   };
 }
 
+// Dedicated Kalshi market price endpoint response
+export interface KalshiMarketPriceResponse {
+  yes: {
+    price: number;  // 0-1 range (dollars)
+    at_time: number; // Unix timestamp in seconds
+  };
+  no: {
+    price: number;
+    at_time: number;
+  };
+}
+
 // Unified Market Type for UI
 export interface UnifiedMarket {
   id: string;
