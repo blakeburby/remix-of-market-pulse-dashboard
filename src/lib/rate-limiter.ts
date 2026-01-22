@@ -216,13 +216,16 @@ export class RateLimiter {
 }
 
 // Platform-specific rate limiters - each gets its own pool
-// Default to 'dev' tier, then set custom 50 QPS each
+// Default to 'dev' tier, then set custom QPS
+// IMPORTANT: Dome API limit is 50 requests per 10 seconds = 5 QPS effective
+// Split budget: 2.5 QPS each for Polymarket and Kalshi
 export const polymarketRateLimiter = new RateLimiter('dev');
 export const kalshiRateLimiter = new RateLimiter('dev');
 
-// Set 50 QPS for each platform (100 total combined)
-polymarketRateLimiter.setCustomQps(50);
-kalshiRateLimiter.setCustomQps(50);
+// Set 2.5 QPS for each platform (5 QPS total = 50 per 10 seconds)
+// This matches Dome API's actual rate limit for dev_tier
+polymarketRateLimiter.setCustomQps(2.5);
+kalshiRateLimiter.setCustomQps(2.5);
 
 // Legacy global rate limiter - points to polymarket for backward compatibility
 export const globalRateLimiter = polymarketRateLimiter;
@@ -231,9 +234,9 @@ export const globalRateLimiter = polymarketRateLimiter;
 export function setAllTiers(tier: DomeTier) {
   polymarketRateLimiter.setTier(tier);
   kalshiRateLimiter.setTier(tier);
-  // Re-apply custom QPS after tier change
-  polymarketRateLimiter.setCustomQps(50);
-  kalshiRateLimiter.setCustomQps(50);
+  // Re-apply custom QPS after tier change (50 per 10s = 5 QPS total, split evenly)
+  polymarketRateLimiter.setCustomQps(2.5);
+  kalshiRateLimiter.setCustomQps(2.5);
 }
 
 // Get combined stats from both rate limiters
@@ -249,6 +252,7 @@ export function getCombinedStats(): { polymarket: RateLimiterStats; kalshi: Rate
 
 // Allocate total QPS budget between platforms based on their workload
 // Platform with more pages gets more QPS so both finish at approximately the same time
+// Note: Minimum QPS is 0.5 (1 request per 2 seconds) to ensure some progress
 export function allocateQpsBudget(
   totalQps: number,
   polymarketPages: number,
@@ -257,9 +261,9 @@ export function allocateQpsBudget(
   const totalPages = polymarketPages + kalshiPages;
   if (totalPages === 0) return { polymarketQps: totalQps / 2, kalshiQps: totalQps / 2 };
   
-  // Allocate QPS proportionally to workload
-  const polymarketQps = Math.max(10, Math.round((polymarketPages / totalPages) * totalQps));
-  const kalshiQps = Math.max(10, totalQps - polymarketQps);
+  // Allocate QPS proportionally to workload with minimum of 0.5 QPS each
+  const polymarketQps = Math.max(0.5, (polymarketPages / totalPages) * totalQps);
+  const kalshiQps = Math.max(0.5, totalQps - polymarketQps);
   
   return { polymarketQps, kalshiQps };
 }

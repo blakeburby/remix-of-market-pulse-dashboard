@@ -694,12 +694,13 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [tier]);
 
-  // Fetch markets from a single platform with PARALLEL page fetching
-  // Pages are fetched concurrently, controlled only by rate limiter
+  // Fetch markets from a single platform
+  // Polymarket uses parallel offset-based fetching
+  // Kalshi uses sequential cursor-based pagination (required by API for >10k records)
   const fetchPlatformMarkets = async (
     platform: Platform,
     signal?: AbortSignal,
-    totalMarkets?: number  // Pass from probe response for parallel fetching
+    totalMarkets?: number  // Pass from probe response for parallel fetching (Polymarket only)
   ): Promise<UnifiedMarket[]> => {
     const apiKey = getApiKey();
     if (!apiKey) return [];
@@ -707,13 +708,6 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     const limit = 100;
     const rateLimiter = platform === 'POLYMARKET' ? polymarketRateLimiter : kalshiRateLimiter;
     
-    // Calculate total pages - use known total or estimate
-    const estimatedTotal = totalMarkets ?? (platform === 'POLYMARKET' ? 4000 : 14000);
-    const totalPages = Math.ceil(estimatedTotal / limit);
-    
-    // Generate all page offsets upfront
-    const offsets = Array.from({ length: totalPages }, (_, i) => i * limit);
-
     const baseUrl = platform === 'POLYMARKET'
       ? 'https://api.domeapi.io/v1/polymarket/markets'
       : 'https://api.domeapi.io/v1/kalshi/markets';
@@ -740,103 +734,195 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       return base;
     });
 
-    // Collect all markets from parallel fetches
+    // Collect all markets
     const allMarkets: UnifiedMarket[] = [];
-    let pagesCompleted = 0;
-    let hitEmptyPage = false;
 
     try {
-      // Fetch all pages in parallel, controlled by rate limiter
-      await rateLimiter.acquireStream(offsets.length, async (index) => {
-        if (signal?.aborted || hitEmptyPage) return;
+      if (platform === 'POLYMARKET') {
+        // POLYMARKET: Parallel offset-based fetching (works fine)
+        const estimatedTotal = totalMarkets ?? 4000;
+        const totalPages = Math.ceil(estimatedTotal / limit);
+        const offsets = Array.from({ length: totalPages }, (_, i) => i * limit);
         
-        const offset = offsets[index];
-        const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}`;
-        
-        try {
-          const response = await rateLimitedFetch(url, apiKey, platform, signal);
+        let pagesCompleted = 0;
+        let hitEmptyPage = false;
+
+        await rateLimiter.acquireStream(offsets.length, async (index) => {
+          if (signal?.aborted || hitEmptyPage) return;
           
-          let pageMarkets: UnifiedMarket[] = [];
-          let hasMore = false;
-
-          if (platform === 'POLYMARKET') {
+          const offset = offsets[index];
+          const url = `${baseUrl}?status=open&limit=${limit}&offset=${offset}`;
+          
+          try {
+            const response = await rateLimitedFetch(url, apiKey, platform, signal);
             const data: PolymarketMarketsResponse = await response.json();
-            pageMarkets = data.markets.map(convertPolymarketMarket);
-            hasMore = data.pagination.has_more;
-          } else {
-            const data = await response.json();
-            pageMarkets = (data.markets || []).map(convertKalshiMarket);
-            hasMore = data.pagination?.has_more ?? (pageMarkets.length === limit);
-          }
+            const pageMarkets = data.markets.map(convertPolymarketMarket);
+            const hasMore = data.pagination.has_more;
 
-          // If we get an empty page, signal to stop further requests
-          if (pageMarkets.length === 0) {
-            hitEmptyPage = true;
-            return;
-          }
-
-          // Thread-safe accumulation
-          allMarkets.push(...pageMarkets);
-          pagesCompleted++;
-
-          // Update discovery progress
-          setDiscoveryProgress(prev => {
-            if (!prev) return prev;
-            const updated = { ...prev };
-            if (platform === 'POLYMARKET') {
-              updated.polymarket = { 
-                offset: pagesCompleted * limit, 
-                found: allMarkets.length, 
-                hasMore: hasMore && !hitEmptyPage 
-              };
-            } else {
-              updated.kalshi = { 
-                offset: pagesCompleted * limit, 
-                found: allMarkets.length, 
-                hasMore: hasMore && !hitEmptyPage 
-              };
+            if (pageMarkets.length === 0) {
+              hitEmptyPage = true;
+              return;
             }
-            return updated;
-          });
 
-          // OPTIMIZATION: Batch state updates every 5 pages to reduce re-renders
-          const BATCH_INTERVAL = 5;
-          if (pagesCompleted % BATCH_INTERVAL === 0 || !hasMore || hitEmptyPage) {
-            setMarkets(prev => {
-              const existing = new Map(prev.map(m => [m.id, m]));
-              for (const market of allMarkets) {
-                const prevMarket = existing.get(market.id);
-                if (prevMarket && prevMarket.platform === platform) {
-                  existing.set(market.id, {
-                    ...market,
-                    sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
-                    sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
-                    lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
-                  });
-                } else {
-                  existing.set(market.id, market);
-                }
-              }
-              return Array.from(existing.values());
+            allMarkets.push(...pageMarkets);
+            pagesCompleted++;
+
+            // Update discovery progress
+            setDiscoveryProgress(prev => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                polymarket: { 
+                  offset: pagesCompleted * limit, 
+                  found: allMarkets.length, 
+                  hasMore: hasMore && !hitEmptyPage 
+                },
+              };
             });
-          }
 
-          if (pagesCompleted % 10 === 0) {
-            console.log(`[Discovery] ${platform}: page=${index + 1}/${totalPages} found=${allMarkets.length}`);
+            // Batch state updates every 5 pages
+            if (pagesCompleted % 5 === 0 || !hasMore || hitEmptyPage) {
+              setMarkets(prev => {
+                const existing = new Map(prev.map(m => [m.id, m]));
+                for (const market of allMarkets) {
+                  const prevMarket = existing.get(market.id);
+                  if (prevMarket && prevMarket.platform === platform) {
+                    existing.set(market.id, {
+                      ...market,
+                      sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
+                      sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
+                      lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
+                    });
+                  } else {
+                    existing.set(market.id, market);
+                  }
+                }
+                return Array.from(existing.values());
+              });
+            }
+
+            if (pagesCompleted % 10 === 0) {
+              console.log(`[Discovery] ${platform}: page=${index + 1}/${totalPages} found=${allMarkets.length}`);
+            }
+          } catch (error) {
+            if ((error as Error).message !== 'Aborted') {
+              console.error(`[Discovery] ${platform} page ${index} error:`, error);
+            }
           }
-        } catch (error) {
-          if ((error as Error).message !== 'Aborted') {
-            console.error(`[Discovery] ${platform} page ${index} error:`, error);
+        });
+      } else {
+        // KALSHI: Sequential cursor-based pagination (required for >10k records)
+        let paginationKey: string | undefined;
+        let hasMore = true;
+        let pageCount = 0;
+        const MAX_PAGES = 200; // Safety limit
+
+        while (hasMore && pageCount < MAX_PAGES) {
+          if (signal?.aborted) break;
+          
+          // Wait for rate limiter
+          await rateLimiter.waitAndAcquire();
+          
+          // Build URL with cursor
+          let url = `${baseUrl}?status=open&limit=${limit}`;
+          if (paginationKey) {
+            url += `&pagination_key=${encodeURIComponent(paginationKey)}`;
+          }
+          
+          try {
+            const response = await fetch(url, {
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              signal,
+            });
+
+            if (response.status === 429) {
+              const data = await response.json().catch(() => ({}));
+              const retryAfter = data.retry_after || 10;
+              console.log(`[Discovery] Kalshi rate limited, waiting ${retryAfter}s`);
+              rateLimiter.markRateLimited(retryAfter);
+              await sleep(retryAfter * 1000 + 500);
+              continue; // Retry same page
+            }
+
+            if (!response.ok) {
+              console.error(`[Discovery] Kalshi API error: ${response.status}`);
+              break;
+            }
+
+            const data = await response.json();
+            const pageMarkets = (data.markets || []).map(convertKalshiMarket);
+            
+            // Extract next cursor
+            paginationKey = data.pagination?.next_key || data.pagination?.pagination_key;
+            hasMore = data.pagination?.has_more ?? (pageMarkets.length === limit && !!paginationKey);
+
+            if (pageMarkets.length === 0) {
+              hasMore = false;
+              break;
+            }
+
+            allMarkets.push(...pageMarkets);
+            pageCount++;
+
+            // Update discovery progress
+            setDiscoveryProgress(prev => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                kalshi: { 
+                  offset: pageCount * limit, 
+                  found: allMarkets.length, 
+                  hasMore 
+                },
+              };
+            });
+
+            // Batch state updates every 5 pages
+            if (pageCount % 5 === 0 || !hasMore) {
+              setMarkets(prev => {
+                const existing = new Map(prev.map(m => [m.id, m]));
+                for (const market of allMarkets) {
+                  const prevMarket = existing.get(market.id);
+                  if (prevMarket && prevMarket.platform === platform) {
+                    existing.set(market.id, {
+                      ...market,
+                      sideA: { ...market.sideA, price: prevMarket.sideA.price, probability: prevMarket.sideA.probability, odds: prevMarket.sideA.odds },
+                      sideB: { ...market.sideB, price: prevMarket.sideB.price, probability: prevMarket.sideB.probability, odds: prevMarket.sideB.odds },
+                      lastUpdated: prevMarket.lastUpdated ?? market.lastUpdated,
+                    });
+                  } else {
+                    existing.set(market.id, market);
+                  }
+                }
+                return Array.from(existing.values());
+              });
+            }
+
+            if (pageCount % 10 === 0) {
+              console.log(`[Discovery] Kalshi: page=${pageCount} found=${allMarkets.length} hasMore=${hasMore}`);
+            }
+          } catch (error) {
+            if ((error as Error).message === 'Aborted') break;
+            console.error(`[Discovery] Kalshi page ${pageCount} error:`, error);
+            // Continue to next attempt after brief delay
+            await sleep(1000);
           }
         }
-      });
+
+        if (pageCount >= MAX_PAGES) {
+          console.warn('[Discovery] Kalshi hit max page limit');
+        }
+      }
 
       setSyncState(prev => ({
         ...prev,
         [platform]: {
           ...prev[platform],
           lastFullDiscoveryAt: new Date(),
-          lastOffsetUsed: pagesCompleted * limit,
+          lastOffsetUsed: allMarkets.length,
           lastError: null,
           lastSuccessAt: new Date(),
           isRunning: false,
@@ -894,7 +980,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       if (!apiKey) return;
 
       // Phase 1: Probe to get total counts (1 request each with limit=1)
-      const TOTAL_QPS = 100;
+      // IMPORTANT: Dome API limit is 50 requests per 10 seconds = 5 QPS total
+      const TOTAL_QPS = 5;
       const PAGE_SIZE = 100;
       
       const [polyProbe, kalshiProbe] = await Promise.all([
@@ -922,12 +1009,15 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       const kalshiPages = Math.ceil(kalshiTotal / PAGE_SIZE);
       
       // Phase 2: Allocate QPS proportionally so both finish at the same time
+      // Note: Kalshi now uses sequential cursor-based pagination, so it can't parallel fetch
+      // Give Polymarket slightly more since it can parallelize
       const { polymarketQps, kalshiQps } = allocateQpsBudget(TOTAL_QPS, polyPages, kalshiPages);
       
       polymarketRateLimiter.setDynamicQps(polymarketQps);
       kalshiRateLimiter.setDynamicQps(kalshiQps);
       
-      console.log(`[Discovery] Allocated QPS - Polymarket: ${polymarketQps} (${polyPages} pages), Kalshi: ${kalshiQps} (${kalshiPages} pages)`);
+      console.log(`[Discovery] Allocated QPS - Polymarket: ${polymarketQps.toFixed(1)} (${polyPages} pages), Kalshi: ${kalshiQps.toFixed(1)} (${kalshiPages} pages, sequential)`);
+
 
       // Phase 3: Fetch BOTH platforms in parallel with known totals for parallel page fetching
       const [polymarketMarkets, kalshiMarkets] = await Promise.all([
@@ -1770,29 +1860,49 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     setFetchingPriceIds(prev => new Set([...prev, ...allFetchingIds]));
     
     try {
-      // Fetch both in parallel
+      // Fetch both in parallel with proper error handling for each
       await Promise.all([
-        warmMatchedPolymarketPrices(matchedPoly, apiKey).then(() => {
-          // Remove Poly IDs from fetching set
-          setFetchingPriceIds(prev => {
-            const next = new Set(prev);
-            polyIdsToFetch.forEach(id => next.delete(id));
-            return next;
-          });
-        }),
-        fetchMatchedKalshiPrices(apiKey).then(updates => {
-          applyKalshiPriceUpdates(updates);
-          // Remove Kalshi IDs from fetching set
-          setFetchingPriceIds(prev => {
-            const next = new Set(prev);
-            kalshiIdsToFetch.forEach(id => next.delete(id));
-            return next;
-          });
-        }),
+        warmMatchedPolymarketPrices(matchedPoly, apiKey)
+          .then(() => {
+            // Remove Poly IDs from fetching set on success
+            setFetchingPriceIds(prev => {
+              const next = new Set(prev);
+              polyIdsToFetch.forEach(id => next.delete(id));
+              return next;
+            });
+          })
+          .catch((err) => {
+            console.error('[Immediate Price Fetch] Polymarket error:', err);
+            // Clear fetching state on error too
+            setFetchingPriceIds(prev => {
+              const next = new Set(prev);
+              polyIdsToFetch.forEach(id => next.delete(id));
+              return next;
+            });
+          }),
+        fetchMatchedKalshiPrices(apiKey)
+          .then(updates => {
+            applyKalshiPriceUpdates(updates);
+            // Remove Kalshi IDs from fetching set on success
+            setFetchingPriceIds(prev => {
+              const next = new Set(prev);
+              kalshiIdsToFetch.forEach(id => next.delete(id));
+              return next;
+            });
+          })
+          .catch((err) => {
+            console.error('[Immediate Price Fetch] Kalshi error:', err);
+            // Clear fetching state on error too
+            setFetchingPriceIds(prev => {
+              const next = new Set(prev);
+              kalshiIdsToFetch.forEach(id => next.delete(id));
+              return next;
+            });
+          }),
       ]);
     } catch (error) {
-      console.error('[Immediate Price Fetch] Error:', error);
-      // Clear fetching state on error
+      console.error('[Immediate Price Fetch] Unexpected error:', error);
+      // Clear all fetching state as a fallback
       setFetchingPriceIds(prev => {
         const next = new Set(prev);
         allFetchingIds.forEach(id => next.delete(id));
