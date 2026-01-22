@@ -43,6 +43,7 @@ interface MarketsContextType {
   isRefreshingAllPrices: boolean;
   lastKalshiRefresh: Date | null;
   matchedPolymarketIds: Set<string>;
+  fetchingPriceIds: Set<string>;
   setMatchedKalshiTickers: (tickers: Set<string>) => void;
   setFilters: (filters: Partial<MarketFilters>) => void;
   startDiscovery: () => void;
@@ -52,6 +53,7 @@ interface MarketsContextType {
   refreshKalshiPrices: () => void;
   refreshAllMatchedPrices: () => void;
   setMatchedPolymarketIds: (ids: Set<string>) => void;
+  triggerImmediatePriceFetch: () => void;
   useCloudScanning: boolean;
   setUseCloudScanning: (value: boolean) => void;
   cloudScanJobId: string | null;
@@ -97,6 +99,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
   const [lastKalshiRefresh, setLastKalshiRefresh] = useState<Date | null>(null);
   const [matchedPolymarketIds, setMatchedPolymarketIds] = useState<Set<string>>(new Set());
   const [matchedKalshiTickerCount, setMatchedKalshiTickerCount] = useState(0);
+  const [fetchingPriceIds, setFetchingPriceIds] = useState<Set<string>>(new Set());
 
   const discoveryIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rpmIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1735,6 +1738,69 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getApiKey, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates]);
 
+  // Immediate price fetch for newly matched markets (called by useArbitrage)
+  const triggerImmediatePriceFetch = useCallback(async () => {
+    const apiKey = getApiKey();
+    if (!apiKey || isWarmingUpRef.current) return;
+    
+    // Get matched markets that are MISSING prices
+    const matchedIds = matchedIdsRef.current;
+    const matchedPoly = marketsRef.current.filter(m => 
+      m.platform === 'POLYMARKET' && 
+      matchedIds.has(m.id) && 
+      m.lastPriceUpdatedAt === null &&
+      m.sideA.tokenId &&
+      m.sideB.tokenId
+    );
+    
+    const matchedKalshiTickers = Array.from(matchedKalshiTickersRef.current).filter(ticker => {
+      const market = marketsRef.current.find(m => m.kalshiMarketTicker === ticker);
+      return market && market.lastPriceUpdatedAt === null;
+    });
+    
+    if (matchedPoly.length === 0 && matchedKalshiTickers.length === 0) return;
+    
+    console.log(`[Immediate Price Fetch] ${matchedPoly.length} Poly, ${matchedKalshiTickers.length} Kalshi`);
+    
+    // Mark these IDs as fetching
+    const polyIdsToFetch = matchedPoly.map(m => m.id);
+    const kalshiIdsToFetch = matchedKalshiTickers.map(t => `kalshi_${t}`);
+    const allFetchingIds = new Set([...polyIdsToFetch, ...kalshiIdsToFetch]);
+    
+    setFetchingPriceIds(prev => new Set([...prev, ...allFetchingIds]));
+    
+    try {
+      // Fetch both in parallel
+      await Promise.all([
+        warmMatchedPolymarketPrices(matchedPoly, apiKey).then(() => {
+          // Remove Poly IDs from fetching set
+          setFetchingPriceIds(prev => {
+            const next = new Set(prev);
+            polyIdsToFetch.forEach(id => next.delete(id));
+            return next;
+          });
+        }),
+        fetchMatchedKalshiPrices(apiKey).then(updates => {
+          applyKalshiPriceUpdates(updates);
+          // Remove Kalshi IDs from fetching set
+          setFetchingPriceIds(prev => {
+            const next = new Set(prev);
+            kalshiIdsToFetch.forEach(id => next.delete(id));
+            return next;
+          });
+        }),
+      ]);
+    } catch (error) {
+      console.error('[Immediate Price Fetch] Error:', error);
+      // Clear fetching state on error
+      setFetchingPriceIds(prev => {
+        const next = new Set(prev);
+        allFetchingIds.forEach(id => next.delete(id));
+        return next;
+      });
+    }
+  }, [getApiKey, warmMatchedPolymarketPrices, fetchMatchedKalshiPrices, applyKalshiPriceUpdates]);
+
   // Matched Kalshi tickers are provided by the matcher (useArbitrage) via setMatchedKalshiTickers.
   // (The previous implementation accidentally treated all Kalshi markets as matched, which made refresh extremely slow.)
 
@@ -1846,6 +1912,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       isRefreshingAllPrices,
       lastKalshiRefresh,
       matchedPolymarketIds,
+      fetchingPriceIds,
       setMatchedKalshiTickers,
       setFilters,
       startDiscovery,
@@ -1855,6 +1922,7 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
       refreshKalshiPrices,
       refreshAllMatchedPrices,
       setMatchedPolymarketIds,
+      triggerImmediatePriceFetch,
       useCloudScanning,
       setUseCloudScanning,
       cloudScanJobId,
@@ -1914,6 +1982,7 @@ export function useMarkets(): MarketsContextType {
     isRefreshingAllPrices: false,
     lastKalshiRefresh: null,
     matchedPolymarketIds: new Set(),
+    fetchingPriceIds: new Set(),
     setMatchedKalshiTickers: () => undefined,
     setFilters: () => undefined,
     startDiscovery: () => undefined,
@@ -1921,6 +1990,7 @@ export function useMarkets(): MarketsContextType {
     startPriceUpdates: () => undefined,
     stopPriceUpdates: () => undefined,
     setMatchedPolymarketIds: () => undefined,
+    triggerImmediatePriceFetch: () => undefined,
     refreshKalshiPrices: () => undefined,
     refreshAllMatchedPrices: () => undefined,
     useCloudScanning: true,

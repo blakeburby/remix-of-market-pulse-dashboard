@@ -446,9 +446,10 @@ const ArbitrageCard = memo(function ArbitrageCard({
 interface MatchCardProps {
   match: CrossPlatformMatch;
   maxAgeSeconds: number;
+  fetchingPriceIds: Set<string>;
 }
 
-const MatchCard = memo(function MatchCard({ match, maxAgeSeconds }: MatchCardProps) {
+const MatchCard = memo(function MatchCard({ match, maxAgeSeconds, fetchingPriceIds }: MatchCardProps) {
   const polyYes = match.polymarket.sideA.probability ?? 0;
   const polyNo = match.polymarket.sideB.probability ?? 0;
   const kalshiYes = match.kalshi.sideA.probability ?? 0;
@@ -456,6 +457,10 @@ const MatchCard = memo(function MatchCard({ match, maxAgeSeconds }: MatchCardPro
   
   const polyHasRealPrice = match.polymarket.lastPriceUpdatedAt !== null;
   const kalshiHasRealPrice = match.kalshi.lastPriceUpdatedAt !== null;
+  
+  const polyIsFetching = fetchingPriceIds.has(match.polymarket.id);
+  const kalshiIsFetching = fetchingPriceIds.has(match.kalshi.id);
+  const isFetching = polyIsFetching || kalshiIsFetching;
   
   const cost1 = kalshiYes + polyNo;
   const cost2 = polyYes + kalshiNo;
@@ -474,15 +479,30 @@ const MatchCard = memo(function MatchCard({ match, maxAgeSeconds }: MatchCardPro
         </div>
         
         {hasMissingPrices && (
-          <div className="mb-2.5 p-2 rounded-lg bg-amber-500/10 text-[10px] sm:text-xs text-amber-600 flex items-center gap-1.5">
-            <AlertCircle className="w-3 h-3 shrink-0" />
-            <span className="line-clamp-1">
-              {!polyHasRealPrice && !kalshiHasRealPrice 
-                ? 'Awaiting prices'
-                : !polyHasRealPrice 
-                ? 'Awaiting Polymarket' 
-                : 'Kalshi: no trades'}
-            </span>
+          <div className={`mb-2.5 p-2 rounded-lg text-[10px] sm:text-xs flex items-center gap-1.5 ${isFetching ? 'bg-blue-500/10 text-blue-600' : 'bg-amber-500/10 text-amber-600'}`}>
+            {isFetching ? (
+              <>
+                <RefreshCw className="w-3 h-3 shrink-0 animate-spin" />
+                <span className="line-clamp-1">
+                  Fetching {!polyHasRealPrice && polyIsFetching && 'Polymarket'}
+                  {!polyHasRealPrice && polyIsFetching && !kalshiHasRealPrice && kalshiIsFetching && ' & '}
+                  {!kalshiHasRealPrice && kalshiIsFetching && 'Kalshi'}
+                  {!polyHasRealPrice && !polyIsFetching && 'Polymarket'}
+                  {!kalshiHasRealPrice && !kalshiIsFetching && 'Kalshi'}...
+                </span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                <span className="line-clamp-1">
+                  {!polyHasRealPrice && !kalshiHasRealPrice 
+                    ? 'Awaiting prices'
+                    : !polyHasRealPrice 
+                    ? 'Awaiting Polymarket' 
+                    : 'Kalshi: no trades'}
+                </span>
+              </>
+            )}
           </div>
         )}
         
@@ -502,21 +522,37 @@ const MatchCard = memo(function MatchCard({ match, maxAgeSeconds }: MatchCardPro
             <div className="flex items-center gap-1.5 mb-1">
               <PolymarketIcon className="w-3 h-3" />
               <span className="text-muted-foreground font-medium">Polymarket</span>
+              {polyIsFetching && <RefreshCw className="w-2.5 h-2.5 animate-spin text-blue-500" />}
             </div>
-            <div className={`flex gap-2 ${!polyHasRealPrice ? 'opacity-50' : ''}`}>
-              <span>Y: <span className="font-semibold">{formatCents(polyYes)}</span></span>
-              <span>N: <span className="font-semibold">{formatCents(polyNo)}</span></span>
-            </div>
+            {polyIsFetching && !polyHasRealPrice ? (
+              <div className="flex gap-2">
+                <Skeleton className="h-4 w-10" />
+                <Skeleton className="h-4 w-10" />
+              </div>
+            ) : (
+              <div className={`flex gap-2 ${!polyHasRealPrice ? 'opacity-50' : ''}`}>
+                <span>Y: <span className="font-semibold">{formatCents(polyYes)}</span></span>
+                <span>N: <span className="font-semibold">{formatCents(polyNo)}</span></span>
+              </div>
+            )}
           </div>
           <div className="p-2 rounded-lg bg-muted/50">
             <div className="flex items-center gap-1.5 mb-1">
               <KalshiIcon className="w-3 h-3" />
               <span className="text-muted-foreground font-medium">Kalshi</span>
+              {kalshiIsFetching && <RefreshCw className="w-2.5 h-2.5 animate-spin text-blue-500" />}
             </div>
-            <div className={`flex gap-2 ${!kalshiHasRealPrice ? 'opacity-50' : ''}`}>
-              <span>Y: <span className="font-semibold">{formatCents(kalshiYes)}</span></span>
-              <span>N: <span className="font-semibold">{formatCents(kalshiNo)}</span></span>
-            </div>
+            {kalshiIsFetching && !kalshiHasRealPrice ? (
+              <div className="flex gap-2">
+                <Skeleton className="h-4 w-10" />
+                <Skeleton className="h-4 w-10" />
+              </div>
+            ) : (
+              <div className={`flex gap-2 ${!kalshiHasRealPrice ? 'opacity-50' : ''}`}>
+                <span>Y: <span className="font-semibold">{formatCents(kalshiYes)}</span></span>
+                <span>N: <span className="font-semibold">{formatCents(kalshiNo)}</span></span>
+              </div>
+            )}
           </div>
         </div>
         
@@ -553,7 +589,7 @@ export function ArbitrageView() {
     updateSettings,
   } = useArbitrage();
   
-  const { refreshAllMatchedPrices, isRefreshingAllPrices, refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary, wsStatus, kalshiWsStatus, kalshiWsSubscriptionCount } = useMarkets();
+  const { refreshAllMatchedPrices, isRefreshingAllPrices, refreshKalshiPrices, isRefreshingKalshi, lastKalshiRefresh, summary, wsStatus, kalshiWsStatus, kalshiWsSubscriptionCount, fetchingPriceIds } = useMarkets();
   const { isInWatchlist, toggleWatchlist } = useWatchlist();
   const [sortBy, setSortBy] = useState<SortOption>('profit');
   const [searchQuery, setSearchQuery] = useState('');
@@ -957,6 +993,7 @@ export function ArbitrageView() {
                       key={`${match.polymarket.id}-${match.kalshi.id}`}
                       match={match} 
                       maxAgeSeconds={settings.maxAgeSeconds}
+                      fetchingPriceIds={fetchingPriceIds}
                     />
                   ))}
               </div>
