@@ -15,7 +15,6 @@ import {
   FileStack,
   CheckCircle2
 } from 'lucide-react';
-import { ScanStatusWidget } from './ScanStatusWidget';
 
 interface SummaryCardsProps {
   summary: DashboardSummary;
@@ -55,9 +54,6 @@ export function SummaryCards({ summary, syncState }: SummaryCardsProps) {
 
   return (
     <div className="space-y-3 sm:space-y-4">
-      {/* Auto-scan Status Widget */}
-      <ScanStatusWidget />
-
       {/* Discovery Progress */}
       {isDiscovering && (
         <Card className="border-border shadow-sm bg-chart-4/5">
