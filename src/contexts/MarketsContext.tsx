@@ -239,16 +239,11 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
     setLastKalshiRefresh(new Date());
   }, []);
 
-  // Kalshi WebSocket connection for real-time orderbook updates
-  const { 
-    status: kalshiWsStatus, 
-    subscriptionCount: kalshiWsSubscriptionCount, 
-    isConnected: kalshiWsConnected 
-  } = useKalshiWebSocket({
-    marketTickers: kalshiTickers,
-    onPriceUpdate: handleKalshiWsPriceUpdate,
-    enabled: wsEnabled && isAuthenticated && kalshiTickers.length > 0,
-  });
+  // Kalshi WebSocket DISABLED - Edge function cannot reach Kalshi's servers (DNS resolution failure)
+  // Using REST API polling instead via fetchMatchedKalshiPrices
+  const kalshiWsStatus: KalshiWSStatus = 'disconnected';
+  const kalshiWsSubscriptionCount = 0;
+  const kalshiWsConnected = false;
 
   // Deferred markets for expensive computations - prevents UI blocking
   const deferredMarkets = useDeferredValue(markets);
@@ -1689,17 +1684,30 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
             const data: KalshiMarketsResponse = await response.json();
             const market = data.markets?.find((m) => m.market_ticker === ticker) ?? data.markets?.[0];
 
+            // Try last_price first, fall back to yes_ask (best ask price)
             const lastPrice = market?.last_price;
-            if (typeof lastPrice !== 'number' || lastPrice <= 0) {
-              // 0/undefined = no trades / no liquidity
+            const yesAsk = market?.yes_ask;
+            
+            let priceToUse: number | undefined;
+            if (typeof lastPrice === 'number' && lastPrice > 0) {
+              priceToUse = lastPrice;
+            } else if (typeof yesAsk === 'number' && yesAsk > 0) {
+              // Use ask price as fallback when no trades have occurred
+              priceToUse = yesAsk;
+              console.log(`[Kalshi Fetch] ${ticker}: Using yes_ask=${yesAsk} (no trades yet)`);
+            }
+            
+            if (!priceToUse) {
+              console.log(`[Kalshi Fetch] ${ticker}: No price available (last_price=${lastPrice}, yes_ask=${yesAsk})`);
               continue;
             }
 
-            const yesProb = lastPrice / 100;
+            const yesProb = priceToUse / 100;
             toUpdate.set(`kalshi_${ticker}`, {
               yes: yesProb,
               no: 1 - yesProb,
             });
+            console.log(`[Kalshi Fetch] ${ticker}: yes=${yesProb.toFixed(2)}, no=${(1 - yesProb).toFixed(2)}`);
           } catch {
             // ignore individual ticker failures
           }
@@ -1766,8 +1774,8 @@ export function MarketsProvider({ children }: { children: React.ReactNode }) {
         console.error('[Kalshi Price Loop] Error:', error);
       }
       
-      // Wait based on tier before next refresh (default 30s for free, 15s for paid)
-      const intervalMs = tier === 'free' ? 30000 : 15000;
+      // Wait based on tier before next refresh (reduced from 30s to 10s for better UX)
+      const intervalMs = tier === 'free' ? 10000 : 5000;
       await sleep(intervalMs);
     }
   }, [getApiKey, fetchMatchedKalshiPrices, applyKalshiPriceUpdates, tier]);
